@@ -26,6 +26,18 @@ pub enum OpStep {
         track: usize,
         slot: u8,
     },
+    /// Send one pre-encoded object write (kit/pattern/pool sound sysex).
+    SendObject { label: String, sysex: Vec<u8> },
+    /// Read a kit back and check every drum track's sample slot.
+    VerifyKitSlots {
+        kit_index: usize,
+        expected: Vec<Option<u8>>,
+    },
+    /// Read a pattern back and check its kit link.
+    VerifyPatternKitLink {
+        pattern_index: usize,
+        expected_kit: usize,
+    },
 }
 
 impl OpStep {
@@ -41,6 +53,17 @@ impl OpStep {
                 "kit {} track {}: set sample slot to {slot}, write the kit, read it back",
                 kit_index + 1,
                 track + 1
+            ),
+            Self::SendObject { label, .. } => label.clone(),
+            Self::VerifyKitSlots { kit_index, .. } => {
+                format!(
+                    "read kit {:02} back and verify its sample slots",
+                    kit_index + 1
+                )
+            }
+            Self::VerifyPatternKitLink { pattern_index, .. } => format!(
+                "read pattern {} back and verify its kit link",
+                crate::model::pattern_display_name(*pattern_index)
             ),
         }
     }
@@ -85,6 +108,35 @@ impl Plan {
             steps,
         })
     }
+
+    /// A plan that writes a transferred pattern (+ kit + pool sounds) into
+    /// the active project. Always backs up first — the active project has
+    /// changed since any earlier session backup (that is the whole point of
+    /// a cross-project paste).
+    pub fn paste_pattern(paste: &crate::transfer::MaterializedPaste) -> Self {
+        let mut steps = vec![OpStep::BackupProject];
+        for write in &paste.writes {
+            steps.push(OpStep::SendObject {
+                label: write.label.clone(),
+                sysex: write.sysex.clone(),
+            });
+        }
+        steps.push(OpStep::VerifyKitSlots {
+            kit_index: paste.kit_index,
+            expected: paste.expected_kit_slots.clone(),
+        });
+        steps.push(OpStep::VerifyPatternKitLink {
+            pattern_index: paste.pattern_index,
+            expected_kit: paste.kit_index,
+        });
+        Self {
+            title: format!(
+                "Copy pattern {} into this project",
+                crate::model::pattern_display_name(paste.pattern_index)
+            ),
+            steps,
+        }
+    }
 }
 
 /// What happened when a plan ran.
@@ -122,6 +174,15 @@ pub fn execute(
                 track,
                 slot,
             } => assign_and_verify(backend, *kit_index, *track, *slot),
+            OpStep::SendObject { sysex, .. } => backend.send_object(sysex),
+            OpStep::VerifyKitSlots {
+                kit_index,
+                expected,
+            } => verify_kit_slots(backend, *kit_index, expected),
+            OpStep::VerifyPatternKitLink {
+                pattern_index,
+                expected_kit,
+            } => verify_pattern_kit_link(backend, *pattern_index, *expected_kit),
         };
         match result {
             Ok(()) => report.completed.push(step.describe()),
@@ -132,6 +193,38 @@ pub fn execute(
         }
     }
     report
+}
+
+/// Read-back verification of a written kit's sample slots.
+fn verify_kit_slots(
+    backend: &mut dyn DeviceBackend,
+    kit_index: usize,
+    expected: &[Option<u8>],
+) -> Result<(), OpError> {
+    let read_back = backend.read_kit_sample_slots(kit_index)?;
+    if read_back != expected {
+        return Err(OpError::VerificationFailed(format!(
+            "kit {:02} sample slots read back as {read_back:?}, expected {expected:?}",
+            kit_index + 1
+        )));
+    }
+    Ok(())
+}
+
+/// Read-back verification of a written pattern's kit link.
+fn verify_pattern_kit_link(
+    backend: &mut dyn DeviceBackend,
+    pattern_index: usize,
+    expected_kit: usize,
+) -> Result<(), OpError> {
+    let read_back = backend.read_pattern_kit_link(pattern_index)?;
+    if read_back != expected_kit {
+        return Err(OpError::VerificationFailed(format!(
+            "pattern {} links to kit {read_back}, expected {expected_kit}",
+            crate::model::pattern_display_name(pattern_index)
+        )));
+    }
+    Ok(())
 }
 
 /// Write + read-back verification for a slot assignment.

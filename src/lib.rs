@@ -12,6 +12,7 @@ pub mod localmeta;
 pub mod midi;
 pub mod model;
 pub mod ops;
+pub mod transfer;
 
 mod gui;
 

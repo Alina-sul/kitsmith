@@ -41,9 +41,22 @@ pub struct ExecutePanel {
     state: Arc<Mutex<ExecState>>,
     /// True once a session backup ran successfully (plans skip re-backup).
     backup_taken: bool,
+    /// Extra guidance shown in the completion dialog of a launched plan.
+    post_note: Option<String>,
 }
 
 impl ExecutePanel {
+    /// Starts executing an externally built plan (e.g. a pattern paste).
+    pub fn launch(
+        &mut self,
+        plan: Plan,
+        in_port: String,
+        ctx: egui::Context,
+        post_note: Option<String>,
+    ) {
+        self.post_note = post_note;
+        self.spawn(plan, in_port, ctx);
+    }
     /// Renders the preview modal + execution state. Call every frame.
     /// Returns the report once, when a finished execution is dismissed.
     pub fn show(
@@ -93,12 +106,19 @@ impl ExecutePanel {
                             .color(theme::TEXT_SECONDARY),
                         );
                     }
+                    if report.succeeded() {
+                        if let Some(note) = &self.post_note {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(note).color(theme::WARNING));
+                        }
+                    }
                     if ui.button("Close").clicked() {
                         close = true;
                     }
                 });
                 if close {
                     *self.state.lock().expect("exec state lock poisoned") = ExecState::Idle;
+                    self.post_note = None;
                     return Some(report);
                 }
                 return None;

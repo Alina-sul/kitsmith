@@ -61,6 +61,10 @@ pub struct SampleSlotInfo {
     /// Full +Drive path.
     pub path: String,
     pub size: u32,
+    /// Device content hash (from the RAM slot table) — the stable sample
+    /// identity used to match slots across projects. 0 in old caches.
+    #[serde(default)]
+    pub hash: u32,
 }
 
 /// One +Drive project slot.

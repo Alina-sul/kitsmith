@@ -19,6 +19,7 @@ Device: Analog Rytm MKII, OS 1.72, USB-MIDI. Probe: `cargo run --example probe`
 | Sample-off wire values (SMP OFF = 0x00/0xFF) | unverified | — | display-only assumption, blocks nothing |
 | SDS sample upload | unverified live | code path exists (M4); needs a listen test on device | open-loop mode |
 | Kit write + read-back (AssignSampleSlot) | **pending** | needs a scratch project loaded on the device first | MockBackend tests only |
+| Pattern/kit/pool-sound object writes (pattern paste) | **pending** | encode→decode round-trips offline (tests/transfer.rs); first hardware run should target a scratch project | MockBackend tests only |
 | Data write (0x57–0x59), move/copy/clear (0x5a–0x5c) | not implemented | write side gated on WP0 write verification | — |
 
 ## Object-API findings (rytm-rs 0.1.3, source-verified)

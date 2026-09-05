@@ -27,6 +27,7 @@ through the preview modal.
 | `execute.rs` | Plan preview modal (intent-named) + execution worker |
 | `import.rs` | Import queue model + SDS upload workers |
 | `backup.rs` | Full-device project backup worker (data-read protocol) |
+| `transfer_ctl.rs` | Pattern-capture worker for cross-project transfer |
 | `sync.rs` | Sync worker controller |
 
 ## Conventions

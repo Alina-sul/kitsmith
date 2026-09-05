@@ -1,6 +1,6 @@
-//! Patterns page (PRD §26): the 8-bank × 16-pattern map with kit links.
-//! Read-only — it explains why kits and samples are "in use" without being a
-//! sequencer editor.
+//! Patterns page (PRD §26): the 8-bank × 16-pattern map with kit links, the
+//! cross-project transfer clipboard, and the paste-plan modal. Pattern
+//! sequence editing stays out of scope.
 
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, ScrollArea, Sense, Stroke};
 
@@ -8,50 +8,295 @@ use crate::gui::app::{ProjectTab, RytmdashApp};
 use crate::gui::{theme, widgets};
 use crate::model::names;
 use crate::model::{pattern_display_name, ProjectModel};
+use crate::ops::Plan;
+use crate::transfer;
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
-    let Some(model) = app.model.as_ref() else {
-        return;
-    };
-    let selected = &mut app.ui_state.selected_pattern;
+    let ctx = ui.ctx().clone();
+    let connected = app.connected_in_port();
+    let capturing = app.capture.is_running();
     let mut jump_kit = None;
+    let mut request_capture: Option<usize> = None;
+    let mut open_paste = false;
+    let mut clear_clipboard = false;
 
-    egui::Panel::right("pattern-inspector")
-        .default_size(theme::INSPECTOR_WIDTH)
-        .resizable(false)
-        .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
-        .show(ui, |ui| {
-            if let Some(index) = *selected {
-                if let Some(kit) = pattern_inspector(ui, model, index, selected) {
-                    jump_kit = Some(kit);
-                }
-            } else {
-                widgets::section_label(ui, "PATTERN DETAILS");
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new("Select a pattern to see which kit it uses.")
+    {
+        let Some(model) = app.model.as_ref() else {
+            return;
+        };
+        let clipboard = &app.clipboard;
+        let selected = &mut app.ui_state.selected_pattern;
+
+        egui::Panel::right("pattern-inspector")
+            .default_size(theme::INSPECTOR_WIDTH)
+            .resizable(false)
+            .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
+            .show(ui, |ui| {
+                if let Some(index) = *selected {
+                    if let Some(kit) = pattern_inspector(
+                        ui,
+                        model,
+                        index,
+                        selected,
+                        connected.is_some(),
+                        capturing,
+                        &mut request_capture,
+                    ) {
+                        jump_kit = Some(kit);
+                    }
+                } else {
+                    widgets::section_label(ui, "PATTERN DETAILS");
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(
+                            "Select a pattern to see which kit it uses, or to copy it for \
+                             transfer into another project.",
+                        )
                         .color(theme::TEXT_MUTED),
-                );
-            }
-        });
-
-    egui::CentralPanel::default()
-        .frame(Frame::new().inner_margin(Margin::symmetric(0, 4)))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(format!("{} patterns link to a kit", model.patterns.len()))
-                    .color(theme::TEXT_SECONDARY),
-            );
-            ui.add_space(theme::GAP_S);
-            ScrollArea::vertical().show(ui, |ui| {
-                pattern_map(ui, model, selected);
+                    );
+                }
             });
-        });
+
+        egui::CentralPanel::default()
+            .frame(Frame::new().inner_margin(Margin::symmetric(0, 4)))
+            .show(ui, |ui| {
+                if let Some(clip) = clipboard {
+                    clipboard_banner(ui, clip, &mut open_paste, &mut clear_clipboard);
+                    ui.add_space(theme::GAP_S);
+                }
+                ui.label(
+                    RichText::new(format!("{} patterns link to a kit", model.patterns.len()))
+                        .color(theme::TEXT_SECONDARY),
+                );
+                ui.add_space(theme::GAP_S);
+                ScrollArea::vertical().show(ui, |ui| {
+                    pattern_map(ui, model, selected);
+                });
+            });
+    }
 
     if let Some(kit_index) = jump_kit {
         app.ui_state.tab = ProjectTab::Kits;
         app.ui_state.kits.selected_kit = Some(kit_index);
         app.ui_state.kits.selected_track = None;
+    }
+    if let Some(index) = request_capture {
+        if let (Some(port), Some(model)) = (connected.clone(), app.model.clone()) {
+            let repaint = ctx.clone();
+            app.capture
+                .start(port, model, index, move || repaint.request_repaint());
+        }
+    }
+    if open_paste {
+        app.ui_state.paste_modal_open = true;
+    }
+    if clear_clipboard {
+        app.clipboard = None;
+        transfer::clear_saved();
+    }
+    paste_modal(app, &ctx);
+}
+
+/// The transfer clipboard banner: what is captured, paste and clear actions.
+fn clipboard_banner(
+    ui: &mut egui::Ui,
+    clip: &transfer::PatternClipboard,
+    open_paste: &mut bool,
+    clear: &mut bool,
+) {
+    Frame::new()
+        .fill(theme::SURFACE)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                widgets::badge(ui, "CLIPBOARD", theme::SAMPLE_PURPLE);
+                ui.label(
+                    RichText::new(&clip.source_hint)
+                        .color(theme::TEXT_PRIMARY)
+                        .strong(),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "captured {}",
+                        clip_age_label(clip.captured_at_unix)
+                    ))
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Clear").clicked() {
+                        *clear = true;
+                    }
+                    if ui.button("Paste into this project…").clicked() {
+                        *open_paste = true;
+                    }
+                });
+            });
+            ui.label(
+                RichText::new(
+                    "To transfer: load the target project on the device, press Sync, then paste.",
+                )
+                .color(theme::TEXT_MUTED)
+                .size(theme::FONT_META),
+            );
+        });
+}
+
+fn clip_age_label(captured_at_unix: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let secs = now.saturating_sub(captured_at_unix);
+    match secs {
+        0..=59 => "just now".to_owned(),
+        60..=3599 => format!("{}m ago", secs / 60),
+        3600..=86_399 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86_400),
+    }
+}
+
+/// The paste-plan modal (PRD §30–§31): remaps, missing samples, overwrite
+/// warnings — then one named action through the backup-first pipeline.
+fn paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
+    if !app.ui_state.paste_modal_open {
+        return;
+    }
+    let (Some(clip), Some(model)) = (&app.clipboard, app.model.as_ref()) else {
+        app.ui_state.paste_modal_open = false;
+        return;
+    };
+    let preview = transfer::plan_paste(clip, model);
+    let connected = app.connected_in_port();
+    let mut close = false;
+    let mut confirm = false;
+    let mut launch: Option<Plan> = None;
+
+    egui::Window::new(format!(
+        "Copy {} into this project?",
+        preview.overwrite_pattern
+    ))
+    .collapsible(false)
+    .resizable(false)
+    .show(ctx, |ui| {
+        ui.label(
+            RichText::new(
+                "Pasting writes into whatever project is ACTIVE on the device. Make sure \
+                     the target project is loaded and synced.",
+            )
+            .color(theme::WARNING),
+        );
+        ui.add_space(theme::GAP_S);
+
+        ui.label(format!(
+            "Pattern {} and {} will be replaced in this project.",
+            preview.overwrite_pattern, preview.overwrite_kit
+        ));
+        if !preview.kit_also_used_by.is_empty() {
+            ui.label(
+                RichText::new(format!(
+                    "Warning: {} also use kit {:02} — replacing it changes them too.",
+                    preview.kit_also_used_by.join(" · "),
+                    clip.kit_index + 1
+                ))
+                .color(theme::WARNING),
+            );
+        }
+        if !preview.overwrite_pool.is_empty() {
+            ui.label(format!(
+                "Sound Pool slot(s) {} will be replaced.",
+                preview
+                    .overwrite_pool
+                    .iter()
+                    .map(|i| format!("{:03}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ));
+        }
+        ui.add_space(theme::GAP_S);
+
+        widgets::section_label(ui, "SAMPLE MAPPING");
+        if preview.slot_remap.is_empty() && preview.missing.is_empty() {
+            ui.label(RichText::new("No samples referenced.").color(theme::TEXT_MUTED));
+        }
+        for (src, dst) in &preview.slot_remap {
+            let name = clip
+                .samples
+                .iter()
+                .find(|d| d.source_slot == *src)
+                .map_or("", |d| d.name.as_str());
+            ui.label(format!(
+                "{name} · slot {src:02} → slot {dst:02} (already loaded here)"
+            ));
+        }
+        for dep in &preview.missing {
+            ui.label(
+                RichText::new(format!(
+                    "{} · not loaded in this project — reference will be cleared",
+                    dep.name
+                ))
+                .color(theme::DANGER),
+            );
+        }
+        ui.add_space(theme::GAP_S);
+        ui.label(
+            RichText::new("A backup of this project is pulled before anything is written.")
+                .color(theme::TEXT_SECONDARY)
+                .size(theme::FONT_META),
+        );
+
+        ui.add_space(theme::GAP_S);
+        ui.horizontal(|ui| {
+            let button = egui::Button::new(format!(
+                "Copy {} into this project",
+                preview.overwrite_pattern
+            ));
+            if ui
+                .add_enabled(connected.is_some(), button)
+                .on_disabled_hover_text("Connect the Rytm first")
+                .clicked()
+            {
+                confirm = true;
+            }
+            if ui.button("Cancel").clicked() {
+                close = true;
+            }
+        });
+    });
+
+    if confirm {
+        // rytm-rs can panic on unsupported object contents; surface that as
+        // an error instead of crashing the app.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            transfer::materialize(clip, &preview)
+        }))
+        .unwrap_or_else(|_| Err("internal error while re-encoding the captured objects".into()));
+        match result {
+            Ok(paste) => launch = Some(Plan::paste_pattern(&paste)),
+            Err(e) => {
+                app.ui_state.paste_modal_open = false;
+                app.toast(format!("Paste failed before writing anything: {e}"));
+                return;
+            }
+        }
+    }
+
+    if let (Some(plan), Some(port)) = (launch, connected) {
+        app.ui_state.paste_modal_open = false;
+        app.execute.launch(
+            plan,
+            port,
+            ctx.clone(),
+            Some(
+                "Now save the project on the device (PROJECT → SAVE) to persist the copy."
+                    .to_owned(),
+            ),
+        );
+    } else if close {
+        app.ui_state.paste_modal_open = false;
     }
 }
 
@@ -143,6 +388,9 @@ fn pattern_inspector(
     model: &ProjectModel,
     index: usize,
     selected: &mut Option<usize>,
+    can_capture: bool,
+    capturing: bool,
+    request_capture: &mut Option<usize>,
 ) -> Option<usize> {
     let mut jump = None;
     ui.horizontal(|ui| {
@@ -154,6 +402,25 @@ fn pattern_inspector(
         });
     });
     ui.add_space(theme::GAP_S);
+
+    widgets::inspector_group(ui, "TRANSFER", |ui| {
+        if capturing {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Capturing pattern + kit…");
+            });
+        } else if ui
+            .add_enabled(can_capture, egui::Button::new("Copy for transfer"))
+            .on_hover_text(
+                "Fresh-reads this pattern, its kit and Sound-locked pool sounds into the \
+                 transfer clipboard. Then load another project on the device, sync, and paste.",
+            )
+            .on_disabled_hover_text("Connect the Rytm first")
+            .clicked()
+        {
+            *request_capture = Some(index);
+        }
+    });
 
     widgets::inspector_group(ui, "LINKED KIT", |ui| {
         match model

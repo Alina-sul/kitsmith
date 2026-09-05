@@ -9,6 +9,7 @@ mod sidebar;
 mod sync;
 mod theme;
 mod top_bar;
+mod transfer_ctl;
 mod views;
 mod widgets;
 

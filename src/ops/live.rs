@@ -128,4 +128,39 @@ impl DeviceBackend for LiveBackend {
             .ok_or_else(|| OpError::InvalidRequest(format!("no kit {kit_index} track {track}")))?;
         Ok(slot_from_wire(sound.sample().slice_number()))
     }
+
+    fn send_object(&mut self, sysex: &[u8]) -> Result<(), OpError> {
+        self.link
+            .send(sysex)
+            .map_err(|e| OpError::Device(e.to_string()))
+    }
+
+    fn read_kit_sample_slots(&mut self, kit_index: usize) -> Result<Vec<Option<u8>>, OpError> {
+        self.query_kit(kit_index)?;
+        let kit = self
+            .rytm
+            .kits()
+            .get(kit_index)
+            .ok_or_else(|| OpError::InvalidRequest(format!("no kit {kit_index}")))?;
+        Ok(kit
+            .sounds()
+            .iter()
+            .take(12)
+            .map(|sound| slot_from_wire(sound.sample().slice_number()))
+            .collect())
+    }
+
+    fn read_pattern_kit_link(&mut self, pattern_index: usize) -> Result<usize, OpError> {
+        let query = PatternQuery::new(pattern_index)
+            .and_then(|q| q.as_sysex())
+            .map_err(|e| OpError::Device(e.to_string()))?;
+        self.exchange(&query).ok_or_else(|| {
+            OpError::Device(format!("pattern {pattern_index} query got no reply"))
+        })?;
+        self.rytm
+            .patterns()
+            .get(pattern_index)
+            .map(rytm_rs::object::Pattern::kit_number)
+            .ok_or_else(|| OpError::InvalidRequest(format!("no pattern {pattern_index}")))
+    }
 }

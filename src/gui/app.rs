@@ -12,10 +12,12 @@ use crate::gui::backup::BackupController;
 use crate::gui::execute::ExecutePanel;
 use crate::gui::import::ImportPanel;
 use crate::gui::sync::SyncController;
+use crate::gui::transfer_ctl::CaptureController;
 use crate::gui::views::activity::{ActivityEntry, ActivityKind};
 use crate::gui::{sidebar, theme, top_bar, views};
 use crate::localmeta::{self, LocalMeta};
 use crate::model::ProjectModel;
+use crate::transfer::{self, PatternClipboard};
 
 /// Top-level navigation destinations (PRD §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,6 +89,8 @@ pub struct UiState {
     /// In-progress local-label edit text and which slot it belongs to.
     pub alias_draft: String,
     pub alias_draft_slot: Option<u32>,
+    /// The paste-preview modal for a cross-project pattern transfer.
+    pub paste_modal_open: bool,
 }
 
 /// When the last sync finished and how complete it was.
@@ -105,6 +109,8 @@ pub struct RytmdashApp {
     pub(crate) local_meta: LocalMeta,
     pub(crate) backup: BackupController,
     pub(crate) manifest: ProjectManifest,
+    pub(crate) capture: CaptureController,
+    pub(crate) clipboard: Option<PatternClipboard>,
     pub(crate) ui_state: UiState,
     pub(crate) last_sync: Option<SyncInfo>,
     pub(crate) activity: Vec<ActivityEntry>,
@@ -124,6 +130,8 @@ impl RytmdashApp {
             local_meta: localmeta::load(),
             backup: BackupController::default(),
             manifest: cache::load_project_manifest(&cache::default_dir()),
+            capture: CaptureController::default(),
+            clipboard: transfer::load(),
             ui_state: UiState::default(),
             last_sync: None,
             activity: Vec::new(),
@@ -213,6 +221,29 @@ impl RytmdashApp {
             };
             self.toast(title.clone());
             self.log_activity(kind, title, None);
+        }
+
+        if let Some(result) = self.capture.take_finished() {
+            match result {
+                Ok(clip) => {
+                    let hint = clip.source_hint.clone();
+                    self.clipboard = Some(clip);
+                    self.toast(format!("Captured {hint} for transfer"));
+                    self.log_activity(
+                        ActivityKind::Success,
+                        format!("Captured {hint} for cross-project transfer"),
+                        None,
+                    );
+                }
+                Err(e) => {
+                    self.toast(format!("Capture failed: {e}"));
+                    self.log_activity(
+                        ActivityKind::Error,
+                        format!("Pattern capture failed: {e}"),
+                        None,
+                    );
+                }
+            }
         }
 
         // Esc leaves the sample-trace state (PRD §16).

@@ -13,6 +13,10 @@ struct MockBackend {
     fail_backup: bool,
     /// When set, reads report this instead of what was written.
     lie_on_read: Option<u8>,
+    /// Slots reported by `read_kit_sample_slots` (paste verification).
+    kit_slots: Vec<Option<u8>>,
+    /// Kit link reported by `read_pattern_kit_link`.
+    pattern_kit_link: usize,
 }
 
 impl DeviceBackend for MockBackend {
@@ -45,6 +49,21 @@ impl DeviceBackend for MockBackend {
             return Ok(Some(lie));
         }
         Ok(self.slots.get(&(kit_index, track)).copied())
+    }
+
+    fn send_object(&mut self, sysex: &[u8]) -> Result<(), OpError> {
+        self.calls.push(format!("send {} bytes", sysex.len()));
+        Ok(())
+    }
+
+    fn read_kit_sample_slots(&mut self, kit_index: usize) -> Result<Vec<Option<u8>>, OpError> {
+        self.calls.push(format!("read-kit {kit_index}"));
+        Ok(self.kit_slots.clone())
+    }
+
+    fn read_pattern_kit_link(&mut self, pattern_index: usize) -> Result<usize, OpError> {
+        self.calls.push(format!("read-pattern {pattern_index}"));
+        Ok(self.pattern_kit_link)
     }
 }
 

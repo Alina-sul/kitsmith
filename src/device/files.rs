@@ -236,6 +236,7 @@ pub fn enrich_model(
                     name,
                     path,
                     size: slot.size,
+                    hash: slot.hash,
                 });
             }
         }
