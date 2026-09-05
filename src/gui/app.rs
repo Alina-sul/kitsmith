@@ -7,6 +7,7 @@ use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Stroke};
 
 use crate::cache::{self, ProjectManifest};
 use crate::device::detect::DeviceState;
+use crate::device::objects::MissedObject;
 use crate::device::watcher::DeviceWatcher;
 use crate::gui::backup::BackupController;
 use crate::gui::execute::ExecutePanel;
@@ -113,6 +114,8 @@ pub struct RytmdashApp {
     pub(crate) clipboard: Option<PatternClipboard>,
     pub(crate) ui_state: UiState,
     pub(crate) last_sync: Option<SyncInfo>,
+    /// Objects the last sync could not read (for Diagnostics).
+    pub(crate) sync_misses: Vec<MissedObject>,
     pub(crate) activity: Vec<ActivityEntry>,
     toasts: Vec<(String, Instant)>,
 }
@@ -134,6 +137,7 @@ impl RytmdashApp {
             clipboard: transfer::load(),
             ui_state: UiState::default(),
             last_sync: None,
+            sync_misses: Vec::new(),
             activity: Vec::new(),
             toasts: Vec::new(),
         }
@@ -169,17 +173,24 @@ impl RytmdashApp {
         if let Some((model, missed)) = self.sync.take_finished() {
             self.last_sync = Some(SyncInfo {
                 at: Instant::now(),
-                missed,
+                missed: missed.len(),
             });
-            let (kind, title) = if missed == 0 {
-                (ActivityKind::Success, "Sync complete".to_owned())
+            let (kind, title, detail) = if missed.is_empty() {
+                (ActivityKind::Success, "Sync complete".to_owned(), None)
             } else {
+                let detail = missed
+                    .iter()
+                    .map(MissedObject::describe)
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 (
                     ActivityKind::Warning,
-                    format!("Partial sync · {missed} items unavailable"),
+                    format!("Partial sync · {} items unavailable", missed.len()),
+                    Some(detail),
                 )
             };
-            self.log_activity(kind, title, None);
+            self.sync_misses = missed;
+            self.log_activity(kind, title, detail);
             self.model = Some(model);
         }
 
@@ -287,9 +298,13 @@ impl RytmdashApp {
             Nav::Activity => {
                 views::activity::show(ui, &self.activity, &self.sync, &self.import, &self.backup)
             }
-            Nav::Diagnostics => {
-                views::diagnostics::show(ui, &self.watcher, self.model.as_ref(), self.last_sync)
-            }
+            Nav::Diagnostics => views::diagnostics::show(
+                ui,
+                &self.watcher,
+                self.model.as_ref(),
+                self.last_sync,
+                &self.sync_misses,
+            ),
         }
     }
 
