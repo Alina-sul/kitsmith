@@ -59,6 +59,21 @@ fn parses_name_kits_and_pattern_links() {
 }
 
 #[test]
+fn project_name_patch_round_trips() {
+    use rytmdash::device::projfile::patch_project_name;
+    let mut bytes = fixture();
+    patch_project_name(&mut bytes, "LIVE SET A").expect("patch");
+    let snapshot = parse_raw_project(&bytes).expect("parse");
+    assert_eq!(snapshot.name, "LIVE SET A");
+    // Overlong names are truncated to the 15-char field.
+    patch_project_name(&mut bytes, "0123456789ABCDEF-TOO-LONG").expect("patch");
+    let snapshot = parse_raw_project(&bytes).expect("parse");
+    assert_eq!(snapshot.name, "0123456789ABCDE");
+    // Empty names are refused.
+    assert!(patch_project_name(&mut bytes, "  ").is_err());
+}
+
+#[test]
 fn compressed_payloads_are_rejected_not_guessed() {
     // Same magic, but far too short to be the raw layout.
     let mut bytes = vec![0u8; 20_000];

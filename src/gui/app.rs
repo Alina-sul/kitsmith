@@ -13,12 +13,14 @@ use crate::device::objects::MissedObject;
 use crate::device::projfile::{self, RawProjectSnapshot};
 use crate::device::watcher::DeviceWatcher;
 use crate::gui::backup::BackupController;
+use crate::gui::drive_ctl::DriveBrowser;
 use crate::gui::execute::ExecutePanel;
+use crate::gui::fileops::{FileOpController, FileOpOutcome};
 use crate::gui::import::ImportPanel;
 use crate::gui::sync::SyncController;
 use crate::gui::transfer_ctl::{CaptureController, Captured};
 use crate::gui::views::activity::{ActivityEntry, ActivityKind};
-use crate::gui::{sidebar, theme, top_bar, views};
+use crate::gui::{project_modals, sidebar, theme, top_bar, views};
 use crate::localmeta::{self, LocalMeta};
 use crate::model::ProjectModel;
 use crate::transfer::{self, KitClipboard, PatternClipboard};
@@ -97,6 +99,16 @@ pub struct UiState {
     pub paste_modal_open: bool,
     /// The paste-preview modal for a cross-project kit transfer.
     pub kit_paste_modal_open: bool,
+    /// Rename-on-device modal: the slot being renamed + the draft name.
+    pub rename_modal_slot: Option<u32>,
+    pub rename_draft: String,
+    /// Copy-project modal: (source slot, chosen destination slot).
+    pub copy_modal: Option<(u32, u32)>,
+    /// Load-sample modal: the +Drive path + the chosen project slot.
+    pub load_sample_modal: Option<String>,
+    pub load_sample_slot: u8,
+    /// Current +Drive browser directory.
+    pub drive_path: String,
 }
 
 /// When the last sync finished and how complete it was.
@@ -116,6 +128,8 @@ pub struct RytmdashApp {
     pub(crate) backup: BackupController,
     pub(crate) manifest: ProjectManifest,
     pub(crate) capture: CaptureController,
+    pub(crate) fileops: FileOpController,
+    pub(crate) drive: DriveBrowser,
     pub(crate) clipboard: Option<PatternClipboard>,
     pub(crate) kit_clipboard: Option<KitClipboard>,
     /// Parsed project snapshots from raw backups (`None` = unparseable),
@@ -146,6 +160,8 @@ impl RytmdashApp {
             backup: BackupController::default(),
             manifest: cache::load_project_manifest(&cache::default_dir()),
             capture: CaptureController::default(),
+            fileops: FileOpController::default(),
+            drive: DriveBrowser::default(),
             clipboard: transfer::load(),
             kit_clipboard: transfer::load_kit(),
             raw_snapshots: HashMap::new(),
@@ -353,9 +369,59 @@ impl RytmdashApp {
             }
         }
 
+        if let Some(result) = self.fileops.take_finished() {
+            match result {
+                Ok((outcome, summary)) => {
+                    self.apply_file_op_outcome(outcome);
+                    self.toast(summary.clone());
+                    self.log_activity(ActivityKind::Success, summary, None);
+                }
+                Err(e) => {
+                    self.toast(format!("Operation failed: {e}"));
+                    self.log_activity(ActivityKind::Error, format!("Operation failed: {e}"), None);
+                }
+            }
+        }
+
         // Esc leaves the sample-trace state (PRD §16).
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.ui_state.kits.traced_slot = None;
+        }
+    }
+
+    /// Folds a completed file operation into the local model and caches.
+    fn apply_file_op_outcome(&mut self, outcome: FileOpOutcome) {
+        match outcome {
+            FileOpOutcome::Renamed { slot, name } => {
+                if let Some(model) = self.model.as_mut() {
+                    if let Some(p) = model.projects.iter_mut().find(|p| p.id == slot) {
+                        p.name = name;
+                    }
+                    let _ = cache::save(model);
+                }
+                self.manifest = cache::load_project_manifest(&cache::default_dir());
+                self.raw_snapshots.remove(&slot);
+            }
+            FileOpOutcome::Copied { dst, name, .. } => {
+                if let Some(model) = self.model.as_mut() {
+                    model.projects.retain(|p| p.id != dst);
+                    model
+                        .projects
+                        .push(crate::model::ProjectInfo { id: dst, name });
+                    model.projects.sort_by_key(|p| p.id);
+                    let _ = cache::save(model);
+                }
+                self.manifest = cache::load_project_manifest(&cache::default_dir());
+                self.raw_snapshots.remove(&dst);
+            }
+            FileOpOutcome::SampleLoaded(info) => {
+                if let Some(model) = self.model.as_mut() {
+                    model.samples.retain(|s| s.slot != info.slot);
+                    model.samples.push(info);
+                    model.samples.sort_by_key(|s| s.slot);
+                    let _ = cache::save(model);
+                }
+            }
         }
     }
 
@@ -386,14 +452,19 @@ impl RytmdashApp {
     fn workspace(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         match self.ui_state.nav {
             Nav::Projects => views::project::show(self, ui),
-            Nav::Drive => views::drive::show(ui, self.model.as_ref()),
+            Nav::Drive => views::drive::show(self, ui),
             Nav::Import => {
                 let in_port = self.connected_in_port();
                 views::import_page::show(ui, &mut self.import, in_port.as_deref(), ctx);
             }
-            Nav::Activity => {
-                views::activity::show(ui, &self.activity, &self.sync, &self.import, &self.backup)
-            }
+            Nav::Activity => views::activity::show(
+                ui,
+                &self.activity,
+                &self.sync,
+                &self.import,
+                &self.backup,
+                self.fileops.running_description(),
+            ),
             Nav::Diagnostics => views::diagnostics::show(
                 ui,
                 &self.watcher,
@@ -453,6 +524,8 @@ impl eframe::App for RytmdashApp {
             .show(ui, |ui| {
                 self.workspace(ui, &ctx);
             });
+
+        project_modals::show(self, &ctx);
 
         // Plan preview / execution modal, if a drag landed.
         let in_port = self.connected_in_port();

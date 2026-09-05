@@ -171,6 +171,29 @@ pub fn parse_raw_project(bytes: &[u8]) -> Option<RawProjectSnapshot> {
     })
 }
 
+/// Writes a new project name into a raw payload (up to 15 printable ASCII
+/// chars, NUL-padded — the exact field the device reads).
+pub fn patch_project_name(bytes: &mut [u8], name: &str) -> Result<(), String> {
+    if !is_raw_project(bytes) {
+        return Err("not a raw project payload".into());
+    }
+    let cleaned: Vec<u8> = name
+        .trim()
+        .chars()
+        .map(|c| c as u32)
+        .filter(|b| (0x20..0x7F).contains(b))
+        .map(|b| b as u8)
+        .take(NAME_LEN)
+        .collect();
+    if cleaned.is_empty() {
+        return Err("the new name has no usable characters".into());
+    }
+    let field = &mut bytes[NAME_OFFSET..NAME_OFFSET + NAME_LEN];
+    field.fill(0);
+    field[..cleaned.len()].copy_from_slice(&cleaned);
+    Ok(())
+}
+
 /// The raw kit record bytes for `kit_index`, for re-encoding into sysex.
 pub fn kit_raw_record(bytes: &[u8], kit_index: usize) -> Option<&[u8]> {
     if !is_raw_project(bytes) || kit_index > 127 {

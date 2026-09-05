@@ -56,7 +56,19 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
         }
         None => page_title(ui, &native_display),
     }
-    ui.add_space(theme::GAP_L);
+    ui.add_space(theme::GAP_S);
+    ui.horizontal(|ui| {
+        let busy = app.fileops.is_running();
+        if ui
+            .add_enabled(!busy, egui::Button::new("Rename on device…"))
+            .on_hover_text("Writes the native name into the project slot (verified).")
+            .clicked()
+        {
+            app.ui_state.rename_modal_slot = Some(id);
+            app.ui_state.rename_draft = names::clean(&native_name).to_owned();
+        }
+    });
+    ui.add_space(theme::GAP_S);
 
     alias_editor(app, ui, id, &native_name, alias.as_deref());
 

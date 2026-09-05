@@ -24,11 +24,16 @@ const HEADER: [u8; 6] = [0xF0, 0x00, 0x20, 0x3C, 0x10, 0x00];
 const OP_PING: u8 = 0x01;
 const OP_SAMPLE_READ_DIR: u8 = 0x10;
 const OP_RAM_READ: u8 = 0x17;
+const OP_RAM_LOAD_SLOT: u8 = 0x19;
 const OP_SAMPLE_INFO_FROM_HASH_SIZE: u8 = 0x23;
 const OP_DATA_LIST: u8 = 0x53;
 const OP_DATA_READ_OPEN: u8 = 0x54;
 const OP_DATA_READ_PARTIAL: u8 = 0x55;
 const OP_DATA_READ_CLOSE: u8 = 0x56;
+const OP_DATA_WRITE_OPEN: u8 = 0x57;
+const OP_DATA_WRITE_PARTIAL: u8 = 0x58;
+const OP_DATA_WRITE_CLOSE: u8 = 0x59;
+const OP_DATA_COPY: u8 = 0x5B;
 
 /// Chunk size requested per partial data read (matches Transfer/elektroid).
 const DATA_CHUNK_BYTES: u32 = 0x2000;
@@ -179,6 +184,97 @@ impl FileClient {
         // Close failure doesn't invalidate already-received bytes.
         let _ = self.transact(link, &body);
         Some(DataDownload { bytes, compressed })
+    }
+
+    /// Uploads one data item (e.g. a whole project payload to
+    /// `/projects/8`). Chunked with per-chunk CRC; the close reply echoes
+    /// the byte count, which is verified. `progress` receives bytes sent.
+    pub fn upload_data(
+        &mut self,
+        link: &mut MidiLink,
+        path: &str,
+        payload: &[u8],
+        mut progress: impl FnMut(usize),
+    ) -> Result<(), String> {
+        let mut body = vec![OP_DATA_WRITE_OPEN];
+        body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        push_path(&mut body, path);
+        let reply = self
+            .transact(link, &body)
+            .ok_or("write-open got no reply")?;
+        if reply.get(5) != Some(&1) {
+            return Err("device refused the data write".into());
+        }
+        let jid = be_u32(&reply, 6);
+
+        let mut sent = 0usize;
+        for (chunk_seq, chunk) in payload.chunks(DATA_CHUNK_BYTES as usize).enumerate() {
+            let mut body = vec![OP_DATA_WRITE_PARTIAL];
+            body.extend_from_slice(&jid.to_be_bytes());
+            body.extend_from_slice(&(chunk_seq as u32).to_be_bytes());
+            body.extend_from_slice(&crc32(0xFFFF_FFFF, chunk).to_be_bytes());
+            body.extend_from_slice(&(chunk.len() as u32).to_be_bytes());
+            body.extend_from_slice(chunk);
+            let reply = self
+                .transact(link, &body)
+                .ok_or("write-partial got no reply")?;
+            if reply.get(5) != Some(&1) {
+                return Err(format!("device rejected chunk {chunk_seq}"));
+            }
+            sent += chunk.len();
+            progress(sent);
+        }
+
+        let mut body = vec![OP_DATA_WRITE_CLOSE];
+        body.extend_from_slice(&jid.to_be_bytes());
+        body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        let reply = self
+            .transact(link, &body)
+            .ok_or("write-close got no reply")?;
+        if reply.get(5) != Some(&1) {
+            return Err("device refused to close the data write".into());
+        }
+        let received = be_u32(&reply, 10) as usize;
+        if received != payload.len() {
+            return Err(format!(
+                "device reports {received} bytes received, sent {}",
+                payload.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Copies one data item to another slot (e.g. `/projects/20` →
+    /// `/projects/8`). The device does the copy; nothing is transferred.
+    pub fn copy_data(&mut self, link: &mut MidiLink, src: &str, dst: &str) -> Result<(), String> {
+        let mut body = vec![OP_DATA_COPY];
+        push_path(&mut body, src);
+        push_path(&mut body, dst);
+        let reply = self.transact(link, &body).ok_or("copy got no reply")?;
+        if reply.get(5) != Some(&1) {
+            return Err("device refused the copy".into());
+        }
+        Ok(())
+    }
+
+    /// Asks the device to load a +Drive sample file into a project RAM slot
+    /// (the SAMPLES → LOAD TO PROJ operation, remotely).
+    pub fn ram_load_slot(
+        &mut self,
+        link: &mut MidiLink,
+        drive_path: &str,
+        slot: u8,
+    ) -> Result<(), String> {
+        let mut body = vec![OP_RAM_LOAD_SLOT, 0];
+        push_path(&mut body, drive_path);
+        body.push(0xFF); // track: none — load into the slot only
+        body.extend_from_slice(&u16::from(slot).to_be_bytes());
+        body.push(0x01);
+        let reply = self.transact(link, &body).ok_or("load got no reply")?;
+        if reply.get(5) != Some(&1) {
+            return Err("device refused to load the sample into the slot".into());
+        }
+        Ok(())
     }
 
     /// Sends `body` (opcode + args) and waits for its matching reply,

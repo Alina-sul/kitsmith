@@ -55,9 +55,15 @@ fn nav_item(app: &mut RytmdashApp, ui: &mut egui::Ui, nav: Nav, label: &str) {
     }
 }
 
-/// The project list (PRD §7.2–7.3): the synced active project first, then all
-/// +Drive project slots. Slot contents are not indexed yet (WP11); the
-/// workspace says so when one is selected instead of faking them.
+/// Payload carried when dragging a project row (drop on an empty slot to
+/// copy it there).
+pub(crate) struct ProjectDrag {
+    pub src: u32,
+}
+
+/// The project browser (PRD §7.2–7.4): the synced active project pinned,
+/// then all 128 +Drive slots — used ones as draggable rows, empty ones as
+/// drop targets for project copies.
 fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     ui.add(
         egui::TextEdit::singleline(&mut app.ui_state.project_search)
@@ -67,6 +73,11 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     backup_controls(app, ui);
     ui.add_space(theme::GAP_S);
 
+    let mut select = None;
+    let mut rename_req: Option<(u32, String)> = None;
+    let mut copy_req: Option<u32> = None;
+    let mut drop_req: Option<(u32, u32)> = None;
+
     ScrollArea::vertical().show(ui, |ui| {
         active_project_row(app, ui);
 
@@ -75,73 +86,168 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             ui.label(RichText::new("No device data yet — press Sync.").color(theme::TEXT_MUTED));
             return;
         };
-        let query = app.ui_state.project_search.to_lowercase();
-        // Row = (slot, native name, attached local alias if any). Search
-        // matches native name, alias and slot number.
-        let rows: Vec<(u32, String, Option<String>)> = model
-            .projects
-            .iter()
-            .map(|p| {
-                let alias = app
-                    .local_meta
-                    .project_alias(p.id, &p.name)
-                    .map(str::to_owned);
-                (p.id, p.name.clone(), alias)
-            })
-            .filter(|(id, name, alias)| {
-                query.is_empty()
-                    || name.to_lowercase().contains(&query)
-                    || alias
-                        .as_ref()
-                        .is_some_and(|a| a.to_lowercase().contains(&query))
-                    || format!("{id:03}").contains(&query)
-            })
-            .collect();
         if model.projects.is_empty() {
             ui.label(
                 RichText::new("Project slots appear after a sync with file-protocol support.")
                     .color(theme::TEXT_MUTED),
             );
+            return;
         }
-        let mut select = None;
-        for (id, name, alias) in &rows {
-            let selected = app.ui_state.project == ProjectSelection::Slot(*id);
-            let clicked = widgets::list_row(ui, selected, theme::LIST_ROW_HEIGHT, |ui| {
+        let query = app.ui_state.project_search.to_lowercase();
+        let busy = app.fileops.is_running();
+        for id in 1..=128u32 {
+            match model.projects.iter().find(|p| p.id == id) {
+                Some(p) => {
+                    let alias = app
+                        .local_meta
+                        .project_alias(p.id, &p.name)
+                        .map(str::to_owned);
+                    if !query.is_empty()
+                        && !p.name.to_lowercase().contains(&query)
+                        && !alias
+                            .as_ref()
+                            .is_some_and(|a| a.to_lowercase().contains(&query))
+                        && !format!("{id:03}").contains(&query)
+                    {
+                        continue;
+                    }
+                    project_row(
+                        app,
+                        ui,
+                        id,
+                        &p.name,
+                        alias.as_deref(),
+                        busy,
+                        &mut select,
+                        &mut rename_req,
+                        &mut copy_req,
+                    );
+                }
+                None => {
+                    // Empty slots show only when not searching; they are the
+                    // drop targets for project copies (PRD §7.4).
+                    if query.is_empty() {
+                        if let Some(src) = empty_slot_row(ui, id) {
+                            drop_req = Some((src, id));
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    if let Some(selection) = select {
+        app.ui_state.project = selection;
+    }
+    if let Some((slot, native)) = rename_req {
+        app.ui_state.rename_modal_slot = Some(slot);
+        app.ui_state.rename_draft = names::clean(&native).to_owned();
+    }
+    if let Some(src) = copy_req {
+        let dst = first_empty_slot(app).unwrap_or(1);
+        app.ui_state.copy_modal = Some((src, dst));
+    }
+    if let Some((src, dst)) = drop_req {
+        app.ui_state.copy_modal = Some((src, dst));
+    }
+}
+
+/// Smallest project slot that holds no project.
+fn first_empty_slot(app: &RytmdashApp) -> Option<u32> {
+    let model = app.model.as_ref()?;
+    (1..=128u32).find(|id| !model.projects.iter().any(|p| p.id == *id))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_row(
+    app: &RytmdashApp,
+    ui: &mut egui::Ui,
+    id: u32,
+    name: &str,
+    alias: Option<&str>,
+    ops_busy: bool,
+    select: &mut Option<ProjectSelection>,
+    rename_req: &mut Option<(u32, String)>,
+    copy_req: &mut Option<u32>,
+) {
+    let selected = app.ui_state.project == ProjectSelection::Slot(id);
+    let drag_id = egui::Id::new(("project-drag", id));
+    let response = ui
+        .dnd_drag_source(drag_id, ProjectDrag { src: id }, |ui| {
+            let _ = widgets::list_row(ui, selected, theme::LIST_ROW_HEIGHT, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(format!("{id:03}"))
                             .color(theme::TEXT_MUTED)
                             .monospace(),
                     );
-                    // A local alias renders in italics and reveals the native
-                    // name on hover, so it never passes for a device name.
                     let text = match alias {
                         Some(alias) => RichText::new(alias)
                             .color(theme::TEXT_PRIMARY)
                             .strong()
                             .italics(),
-                        None => RichText::new(names::project_display_name(name, *id).text())
+                        None => RichText::new(names::project_display_name(name, id).text())
                             .color(theme::TEXT_PRIMARY)
                             .strong(),
                     };
                     let label = ui.add(egui::Label::new(text).truncate());
-                    if let Some(_alias) = alias {
+                    if alias.is_some() {
                         label.on_hover_text(format!(
                             "Local label · native name: {}",
-                            names::project_display_name(name, *id).text()
+                            names::project_display_name(name, id).text()
                         ));
                     }
                 });
-            })
-            .clicked();
-            if clicked {
-                select = Some(ProjectSelection::Slot(*id));
-            }
+            });
+        })
+        .response;
+    response.context_menu(|ui| {
+        if ui.button("View").clicked() {
+            *select = Some(ProjectSelection::Slot(id));
+            ui.close();
         }
-        if let Some(selection) = select {
-            app.ui_state.project = selection;
+        if ui
+            .add_enabled(!ops_busy, egui::Button::new("Rename on device…"))
+            .clicked()
+        {
+            *rename_req = Some((id, name.to_owned()));
+            ui.close();
+        }
+        if ui
+            .add_enabled(!ops_busy, egui::Button::new("Copy to empty slot…"))
+            .clicked()
+        {
+            *copy_req = Some(id);
+            ui.close();
         }
     });
+    if response.clicked() {
+        *select = Some(ProjectSelection::Slot(id));
+    }
+}
+
+/// A dim `Empty` row that accepts a dragged project. Returns the source slot
+/// when a drag was dropped here.
+fn empty_slot_row(ui: &mut egui::Ui, id: u32) -> Option<u32> {
+    let frame = egui::Frame::new()
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(8, 4));
+    let (_, payload) = ui.dnd_drop_zone::<ProjectDrag, ()>(frame, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{id:03}"))
+                    .color(theme::TEXT_MUTED)
+                    .monospace(),
+            );
+            ui.label(
+                RichText::new("Empty")
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+            );
+        });
+    });
+    payload.map(|drag| drag.src)
 }
 
 /// "Back up all projects" — downloads every listed project payload into the

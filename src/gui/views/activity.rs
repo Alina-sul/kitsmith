@@ -34,6 +34,7 @@ pub fn show(
     sync: &SyncController,
     import: &ImportPanel,
     backup: &BackupController,
+    fileop: Option<String>,
 ) {
     page_title(ui, "Activity");
     ui.add_space(theme::GAP_M);
@@ -68,6 +69,13 @@ pub fn show(
             ui.label(
                 RichText::new(format!("{done}/{total} · {current}")).color(theme::TEXT_SECONDARY),
             );
+        });
+    }
+    if let Some(desc) = fileop {
+        anything_running = true;
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(desc);
         });
     }
     for item in import.items() {
