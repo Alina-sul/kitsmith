@@ -110,7 +110,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                     if entry.is_dir {
                         let row = widgets::list_row(ui, false, 32.0, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("▸").color(theme::TEXT_SECONDARY));
+                                widgets::folder_icon(ui);
                                 ui.label(RichText::new(&entry.name).color(theme::TEXT_PRIMARY));
                             });
                         });

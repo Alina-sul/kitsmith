@@ -77,6 +77,22 @@ pub fn drag_handle(ui: &mut Ui) {
     }
 }
 
+/// A small painted right-pointing triangle — the folder marker (painted, so
+/// it renders regardless of font coverage).
+pub fn folder_icon(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 12.0), Sense::hover());
+    let c = rect.center();
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(c.x - 3.0, c.y - 4.5),
+            egui::pos2(c.x + 4.0, c.y),
+            egui::pos2(c.x - 3.0, c.y + 4.5),
+        ],
+        theme::TEXT_SECONDARY,
+        Stroke::NONE,
+    ));
+}
+
 /// An uppercase section label, e.g. `PROJECTS`.
 pub fn section_label(ui: &mut Ui, text: &str) {
     ui.label(
