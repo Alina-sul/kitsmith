@@ -17,3 +17,9 @@ pub const RYTM_PORT_NAME_HINT: &str = "rytm";
 
 /// Client name rytmdash registers with the OS MIDI system.
 pub const MIDI_CLIENT_NAME: &str = "rytmdash";
+
+/// How long to wait for the reply to one object query during sync.
+pub const OBJECT_REPLY_TIMEOUT: Duration = Duration::from_millis(2000);
+
+/// Consecutive unanswered object queries before a sync gives up.
+pub const SYNC_MISS_LIMIT: usize = 8;

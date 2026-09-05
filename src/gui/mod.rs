@@ -1,6 +1,8 @@
 //! The egui dashboard shell.
 
 mod app;
+mod dashboard;
+mod sync;
 
 use app::RytmdashApp;
 

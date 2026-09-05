@@ -4,4 +4,5 @@
 //! is `device`'s job.
 
 pub mod inquiry;
+pub mod link;
 pub mod ports;
