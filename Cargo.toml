@@ -1,0 +1,10 @@
+[package]
+name = "rytmdash"
+version = "0.1.0"
+edition = "2021"
+description = "Smart dashboard for the Elektron Analog Rytm MKII"
+license = "MIT"
+
+[dependencies]
+eframe = "0.35.0"
+midir = "0.10"
