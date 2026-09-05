@@ -74,7 +74,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                 .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
                 .show(ui, |ui| {
                     if state.selected_track.is_some() {
-                        track_inspector(ui, model, state);
+                        track_inspector(ui, model, state, browsing, &mut request_pad_assign);
                     } else {
                         sample_rail(ui, model, state);
                     }
@@ -676,6 +676,8 @@ fn track_inspector(
     ui: &mut egui::Ui,
     model: &ProjectModel,
     state: &mut crate::gui::app::KitsState,
+    browsing: bool,
+    request_pad_assign: &mut Option<(usize, usize)>,
 ) {
     let Some(kit) = state.selected_kit.and_then(|k| model.kits.get(k)) else {
         return;
@@ -740,9 +742,33 @@ fn track_inspector(
             {
                 state.traced_slot = (!tracing).then_some(slot);
             }
+            ui.add_space(4.0);
+            if ui
+                .add_enabled(!browsing, egui::Button::new("Replace from +Drive…"))
+                .on_hover_text(
+                    "Pick any +Drive sample: it loads into a free project slot and this track \
+                     is re-pointed at it (the current slot stays loaded).",
+                )
+                .on_disabled_hover_text("Snapshots are read-only")
+                .clicked()
+            {
+                *request_pad_assign = Some((kit.index, track));
+            }
         }
         None => {
             ui.label(RichText::new("No sample assigned").color(theme::TEXT_MUTED));
+            ui.add_space(4.0);
+            if ui
+                .add_enabled(!browsing, egui::Button::new("Assign sample from +Drive…"))
+                .on_hover_text(
+                    "Pick any +Drive sample: it loads into a free project slot and gets \
+                     assigned to this track.",
+                )
+                .on_disabled_hover_text("Snapshots are read-only")
+                .clicked()
+            {
+                *request_pad_assign = Some((kit.index, track));
+            }
         }
     });
 
