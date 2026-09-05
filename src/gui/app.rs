@@ -1,14 +1,15 @@
-//! The application: connection status, sync controls, and the dashboard.
+//! The application shell: status bar, dashboard, import tray, execute modal.
 
 use eframe::egui::{self, Color32, RichText};
 
 use crate::cache;
 use crate::device::detect::DeviceState;
 use crate::device::watcher::DeviceWatcher;
-use crate::gui::dashboard;
+use crate::gui::dashboard::{self, DashboardState};
 use crate::gui::execute::ExecutePanel;
 use crate::gui::import::ImportPanel;
 use crate::gui::sync::{SyncController, SyncStatus};
+use crate::gui::theme::OK_COLOR;
 use crate::model::ProjectModel;
 
 pub struct RytmdashApp {
@@ -16,6 +17,7 @@ pub struct RytmdashApp {
     sync: SyncController,
     import: ImportPanel,
     execute: ExecutePanel,
+    dashboard: DashboardState,
     model: Option<ProjectModel>,
     last_sync_note: Option<String>,
 }
@@ -28,6 +30,7 @@ impl RytmdashApp {
             sync: SyncController::default(),
             import: ImportPanel::default(),
             execute: ExecutePanel::default(),
+            dashboard: DashboardState::default(),
             model: cache::load(),
             last_sync_note: None,
         }
@@ -40,7 +43,7 @@ impl RytmdashApp {
             ui.separator();
             match &snapshot.device {
                 DeviceState::Connected(info) => {
-                    ui.label(RichText::new("●").color(Color32::from_rgb(0x2E, 0xCC, 0x71)));
+                    ui.label(RichText::new("●").color(OK_COLOR));
                     ui.label(&info.port_name).on_hover_text(info.describe());
                     self.sync_controls(ui, ctx, &info.port_name);
                 }
@@ -52,6 +55,15 @@ impl RytmdashApp {
                     );
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button("⋯", |ui| {
+                    port_list(ui, "MIDI inputs", &snapshot.ports.inputs);
+                    port_list(ui, "MIDI outputs", &snapshot.ports.outputs);
+                });
+                if let Some(note) = &self.last_sync_note {
+                    ui.label(RichText::new(note).weak().small());
+                }
+            });
         });
     }
 
@@ -71,7 +83,11 @@ impl RytmdashApp {
                 }
             }
             status => {
-                if ui.button("⟳ Sync from device").clicked() {
+                if ui
+                    .button("⟳ Sync")
+                    .on_hover_text("pull the active project")
+                    .clicked()
+                {
                     let repaint_ctx = ctx.clone();
                     self.last_sync_note = None;
                     self.sync
@@ -84,6 +100,29 @@ impl RytmdashApp {
                 }
             }
         }
+    }
+
+    fn empty_state(&self, ui: &mut egui::Ui, connected: bool) {
+        ui.add_space(48.0);
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("No project data yet").heading().weak());
+            ui.add_space(8.0);
+            if connected {
+                ui.label("Press ⟳ Sync in the top bar to pull the active project.");
+            } else {
+                ui.label("1 · Connect the Analog Rytm over USB");
+                ui.label("2 · On the device: USB CONFIG → USB-MIDI, PORT CONFIG → USB");
+                ui.label("3 · Press ⟳ Sync in the top bar");
+            }
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(
+                    "You can also drop .wav files anywhere in this window \
+                     to convert them for upload.",
+                )
+                .weak(),
+            );
+        });
     }
 }
 
@@ -100,10 +139,6 @@ impl eframe::App for RytmdashApp {
             self.model = Some(model);
         }
 
-        egui::Panel::top("status-bar").show(ui, |ui| {
-            self.top_bar(ui, &ctx);
-        });
-
         // Files dropped anywhere on the window enter the import queue.
         let dropped: Vec<std::path::PathBuf> = ctx.input(|input| {
             input
@@ -117,52 +152,33 @@ impl eframe::App for RytmdashApp {
             self.import.add_dropped_files(dropped);
         }
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            if let Some(note) = &self.last_sync_note {
-                ui.label(RichText::new(note).weak());
-                ui.add_space(4.0);
-            }
-            if !self.import.is_empty() {
-                let in_port = match &self.watcher.snapshot().device {
-                    DeviceState::Connected(info) => Some(info.port_name.clone()),
-                    DeviceState::Searching => None,
-                };
-                self.import.show(ui, in_port.as_deref(), &ctx);
-                ui.add_space(8.0);
-                ui.separator();
-            }
-            match &self.model {
-                Some(model) => {
-                    if let Some(assign) = dashboard::show(ui, model) {
-                        self.execute.pending = Some(assign);
-                    }
-                }
-                None => {
-                    ui.add_space(24.0);
-                    ui.vertical_centered(|ui| {
-                        ui.label(
-                            RichText::new(
-                                "No project data yet — connect the Rytm and press \
-                                 “Sync from device” to pull the active project.",
-                            )
-                            .weak(),
-                        );
-                    });
-                }
-            }
-            ui.add_space(12.0);
-            ui.collapsing("MIDI ports", |ui| {
-                let snapshot = self.watcher.snapshot();
-                port_list(ui, "Inputs", &snapshot.ports.inputs);
-                port_list(ui, "Outputs", &snapshot.ports.outputs);
-            });
-        });
-
-        // Plan preview / execution modal, if a drag landed.
         let in_port = match &self.watcher.snapshot().device {
             DeviceState::Connected(info) => Some(info.port_name.clone()),
             DeviceState::Searching => None,
         };
+
+        egui::Panel::top("status-bar").show(ui, |ui| {
+            self.top_bar(ui, &ctx);
+        });
+
+        if !self.import.is_empty() {
+            egui::Panel::bottom("import-tray")
+                .resizable(false)
+                .show(ui, |ui| {
+                    self.import.show(ui, in_port.as_deref(), &ctx);
+                });
+        }
+
+        egui::CentralPanel::default().show(ui, |ui| match &self.model {
+            Some(model) => {
+                if let Some(assign) = dashboard::show(ui, model, &mut self.dashboard) {
+                    self.execute.pending = Some(assign);
+                }
+            }
+            None => self.empty_state(ui, in_port.is_some()),
+        });
+
+        // Plan preview / execution modal, if a drag landed.
         self.execute.show(&ctx, in_port.as_deref());
     }
 }
