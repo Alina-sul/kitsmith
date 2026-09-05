@@ -23,6 +23,13 @@ pub const TRACK_COUNT: usize = 12;
 /// Verify on hardware whether 0 can ever be a real slot (tracked in the M2 PR).
 const SMP_OFF_VALUES: [usize; 2] = [0, 0xFF];
 
+/// Interprets a raw SMPL-page slice number as a project sample slot.
+pub fn slot_from_wire(raw: usize) -> Option<u8> {
+    (!SMP_OFF_VALUES.contains(&raw))
+        .then(|| u8::try_from(raw).unwrap_or(u8::MAX))
+        .filter(|&s| s <= SAMPLE_SLOT_COUNT)
+}
+
 /// A distilled Rytm project.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ProjectModel {
@@ -130,13 +137,10 @@ impl ProjectModel {
 
 impl SoundModel {
     fn from_rytm(sound: &rytm_rs::object::Sound) -> Self {
-        let raw_slot = sound.sample().slice_number();
         Self {
             name: sound.name().to_owned(),
             machine: format!("{:?}", sound.machine_type()),
-            sample_slot: (!SMP_OFF_VALUES.contains(&raw_slot))
-                .then(|| u8::try_from(raw_slot).unwrap_or(u8::MAX))
-                .filter(|&s| s <= SAMPLE_SLOT_COUNT),
+            sample_slot: slot_from_wire(sound.sample().slice_number()),
         }
     }
 }

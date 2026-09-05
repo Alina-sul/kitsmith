@@ -6,6 +6,7 @@ use crate::cache;
 use crate::device::detect::DeviceState;
 use crate::device::watcher::DeviceWatcher;
 use crate::gui::dashboard;
+use crate::gui::execute::ExecutePanel;
 use crate::gui::import::ImportPanel;
 use crate::gui::sync::{SyncController, SyncStatus};
 use crate::model::ProjectModel;
@@ -14,6 +15,7 @@ pub struct RytmdashApp {
     watcher: DeviceWatcher,
     sync: SyncController,
     import: ImportPanel,
+    execute: ExecutePanel,
     model: Option<ProjectModel>,
     last_sync_note: Option<String>,
 }
@@ -25,6 +27,7 @@ impl RytmdashApp {
             watcher: DeviceWatcher::spawn(move || ctx.request_repaint()),
             sync: SyncController::default(),
             import: ImportPanel::default(),
+            execute: ExecutePanel::default(),
             model: cache::load(),
             last_sync_note: None,
         }
@@ -129,7 +132,11 @@ impl eframe::App for RytmdashApp {
                 ui.separator();
             }
             match &self.model {
-                Some(model) => dashboard::show(ui, model),
+                Some(model) => {
+                    if let Some(assign) = dashboard::show(ui, model) {
+                        self.execute.pending = Some(assign);
+                    }
+                }
                 None => {
                     ui.add_space(24.0);
                     ui.vertical_centered(|ui| {
@@ -150,6 +157,13 @@ impl eframe::App for RytmdashApp {
                 port_list(ui, "Outputs", &snapshot.ports.outputs);
             });
         });
+
+        // Plan preview / execution modal, if a drag landed.
+        let in_port = match &self.watcher.snapshot().device {
+            DeviceState::Connected(info) => Some(info.port_name.clone()),
+            DeviceState::Searching => None,
+        };
+        self.execute.show(&ctx, in_port.as_deref());
     }
 }
 

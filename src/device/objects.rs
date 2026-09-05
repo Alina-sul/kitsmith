@@ -98,17 +98,18 @@ pub fn sync_active_project(
 /// Waits for the reply to the last query, feeding every received sysex to the
 /// project. Returns false when the timeout elapses with no accepted message.
 fn await_reply(link: &MidiLink, rytm: &mut RytmProject) -> bool {
+    accept_reply(link, rytm).is_some()
+}
+
+/// Waits for one reply the project accepts and returns its raw bytes
+/// (`None` on timeout). Non-AR sysex is skipped, not fatal.
+pub fn accept_reply(link: &MidiLink, rytm: &mut RytmProject) -> Option<Vec<u8>> {
     let deadline = std::time::Instant::now() + OBJECT_REPLY_TIMEOUT;
     loop {
-        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
-            return false;
-        };
-        let Some(msg) = link.recv_timeout(remaining) else {
-            return false;
-        };
-        // Non-AR sysex (or a reply we cannot parse) is skipped, not fatal.
+        let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
+        let msg = link.recv_timeout(remaining)?;
         if rytm.update_from_sysex_response(&msg).is_ok() {
-            return true;
+            return Some(msg);
         }
     }
 }

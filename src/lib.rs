@@ -10,6 +10,7 @@ pub mod config;
 pub mod device;
 pub mod midi;
 pub mod model;
+pub mod ops;
 
 mod gui;
 

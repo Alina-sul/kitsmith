@@ -2,6 +2,7 @@
 
 mod app;
 mod dashboard;
+mod execute;
 mod import;
 mod sync;
 

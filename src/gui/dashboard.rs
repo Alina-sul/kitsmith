@@ -1,13 +1,27 @@
-//! Read-only dashboard view of a synced project model.
+//! Dashboard view of a synced project model.
+//!
+//! Sample slots are drag sources; kit track rows are drop zones. A completed
+//! drag returns a [`PendingAssign`] for the app to preview and execute — the
+//! dashboard itself never mutates anything.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, Frame, Id, RichText};
 
-use crate::model::{pattern_display_name, ProjectModel};
+use crate::gui::execute::PendingAssign;
+use crate::model::{pattern_display_name, KitModel, ProjectModel};
 
-/// Renders the project model: summary, sample-slot usage, kits.
-pub fn show(ui: &mut egui::Ui, model: &ProjectModel) {
+/// Payload carried by a slot drag.
+struct SlotDrag {
+    slot: u8,
+}
+
+const SLOT_COLOR: Color32 = Color32::from_rgb(0x9B, 0x59, 0xB6);
+
+/// Renders the model. Returns a pending assignment when a slot was dropped
+/// on a kit track.
+pub fn show(ui: &mut egui::Ui, model: &ProjectModel) -> Option<PendingAssign> {
     let usage = model.slot_usage();
     let linked_kits = model.linked_kit_indices();
+    let mut dropped = None;
 
     ui.label(format!(
         "{} sample slots referenced · {} kits linked by patterns · {} pool sounds",
@@ -15,6 +29,9 @@ pub fn show(ui: &mut egui::Ui, model: &ProjectModel) {
         linked_kits.len(),
         model.pool_sounds.len(),
     ));
+    ui.label(
+        RichText::new("Drag a slot chip onto a kit track to re-point that track's sample.").weak(),
+    );
     ui.add_space(8.0);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -25,15 +42,22 @@ pub fn show(ui: &mut egui::Ui, model: &ProjectModel) {
                     ui.label(RichText::new("No kit references any sample slot.").weak());
                 }
                 for (slot, uses) in &usage {
-                    ui.collapsing(format!("slot {slot:>3} — {} use(s)", uses.len()), |ui| {
+                    ui.horizontal(|ui| {
+                        slot_chip(ui, *slot);
+                        ui.label(format!("{} use(s)", uses.len()));
+                    });
+                    ui.indent(("slot-uses", slot), |ui| {
                         for u in uses {
-                            ui.label(format!(
-                                "kit {:>3} {:<16} track {:>2} · {}",
-                                u.kit_index + 1,
-                                u.kit_name,
-                                u.track + 1,
-                                u.sound_name,
-                            ));
+                            ui.label(
+                                RichText::new(format!(
+                                    "kit {:>3} {} · track {:>2} · {}",
+                                    u.kit_index + 1,
+                                    u.kit_name,
+                                    u.track + 1,
+                                    u.sound_name,
+                                ))
+                                .weak(),
+                            );
                         }
                     });
                 }
@@ -61,34 +85,63 @@ pub fn show(ui: &mut egui::Ui, model: &ProjectModel) {
                             kit.name,
                             patterns.join(" ")
                         ),
-                        |ui| kit_sounds(ui, kit),
+                        |ui| {
+                            if let Some(assign) = kit_tracks(ui, kit) {
+                                dropped = Some(assign);
+                            }
+                        },
                     );
                 }
             },
         );
     });
+
+    dropped
 }
 
-fn kit_sounds(ui: &mut egui::Ui, kit: &crate::model::KitModel) {
-    egui::Grid::new(("kit-sounds", kit.index))
-        .striped(true)
-        .show(ui, |ui| {
-            ui.label(RichText::new("track").weak());
-            ui.label(RichText::new("sound").weak());
-            ui.label(RichText::new("machine").weak());
-            ui.label(RichText::new("sample slot").weak());
-            ui.end_row();
-            for (track, sound) in kit.sounds.iter().enumerate() {
-                ui.label(format!("{}", track + 1));
+/// A draggable chip for one sample slot.
+fn slot_chip(ui: &mut egui::Ui, slot: u8) {
+    let id = Id::new(("slot-chip", slot));
+    ui.dnd_drag_source(id, SlotDrag { slot }, |ui| {
+        Frame::new()
+            .fill(SLOT_COLOR.gamma_multiply(0.25))
+            .corner_radius(4.0)
+            .inner_margin(egui::Margin::symmetric(6, 2))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(format!("slot {slot}"))
+                        .color(SLOT_COLOR)
+                        .strong(),
+                );
+            });
+    });
+}
+
+/// One kit's 12 tracks, each row a drop zone for slot chips.
+fn kit_tracks(ui: &mut egui::Ui, kit: &KitModel) -> Option<PendingAssign> {
+    let mut dropped = None;
+    for (track, sound) in kit.sounds.iter().enumerate() {
+        let frame = Frame::new().inner_margin(egui::Margin::symmetric(4, 2));
+        let (_, payload) = ui.dnd_drop_zone::<SlotDrag, ()>(frame, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{:>2}", track + 1)).weak());
                 ui.label(&sound.name);
-                ui.label(&sound.machine);
+                ui.label(RichText::new(&sound.machine).weak());
                 match sound.sample_slot {
-                    Some(slot) => ui.label(
-                        RichText::new(format!("{slot}")).color(Color32::from_rgb(0x9B, 0x59, 0xB6)),
-                    ),
-                    None => ui.label(RichText::new("—").weak()),
-                };
-                ui.end_row();
-            }
+                    Some(slot) => slot_chip(ui, slot),
+                    None => {
+                        ui.label(RichText::new("no sample").weak());
+                    }
+                }
+            });
         });
+        if let Some(drag) = payload {
+            dropped = Some(PendingAssign {
+                kit_index: kit.index,
+                track,
+                slot: drag.slot,
+            });
+        }
+    }
+    dropped
 }
