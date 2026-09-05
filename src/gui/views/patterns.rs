@@ -41,8 +41,8 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(
-                            "Select a pattern to see which kit it uses, or to copy it for \
-                             transfer into another project.",
+                            "Select a pattern to see which kit it uses. Right-click one to copy \
+                             it into another project.",
                         )
                         .color(theme::TEXT_MUTED),
                     );
@@ -62,9 +62,11 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                 );
                 ui.add_space(theme::GAP_S);
                 ui.label(
-                    RichText::new("Right-click a pattern to copy it for transfer.")
-                        .color(theme::TEXT_MUTED)
-                        .size(theme::FONT_META),
+                    RichText::new(
+                        "Right-click a pattern to copy it — then paste it into any project.",
+                    )
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
                 );
                 ScrollArea::vertical().show(ui, |ui| {
                     pattern_map(
@@ -144,7 +146,8 @@ fn clipboard_banner(
             });
             ui.label(
                 RichText::new(
-                    "To transfer: load the target project on the device, press Sync, then paste.",
+                    "To paste into another project: load that project on the Rytm, press Sync, \
+                     then paste. (The device only lets us write into the active project.)",
                 )
                 .color(theme::TEXT_MUTED)
                 .size(theme::FONT_META),
@@ -395,10 +398,10 @@ fn pattern_cell(
     if link.is_some() {
         response.context_menu(|ui| {
             if ui
-                .add_enabled(can_capture, egui::Button::new("Copy for transfer"))
+                .add_enabled(can_capture, egui::Button::new("Copy pattern"))
                 .on_hover_text(
-                    "Fresh-reads this pattern, its kit and Sound-locked pool sounds into the \
-                     transfer clipboard.",
+                    "Copies this pattern, its kit and Sound-locked pool sounds to the rytmdash \
+                     clipboard — paste it into any project.",
                 )
                 .on_disabled_hover_text("Connect the Rytm first")
                 .clicked()

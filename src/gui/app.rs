@@ -262,20 +262,20 @@ impl RytmdashApp {
                 Ok(Captured::Pattern(clip)) => {
                     let hint = clip.source_hint.clone();
                     self.clipboard = Some(clip);
-                    self.toast(format!("Captured {hint} for transfer"));
+                    self.toast(format!("Copied {hint} — paste it in any project"));
                     self.log_activity(
                         ActivityKind::Success,
-                        format!("Captured {hint} for cross-project transfer"),
+                        format!("Copied {hint} to the clipboard"),
                         None,
                     );
                 }
                 Ok(Captured::Kit(clip)) => {
                     let hint = clip.source_hint.clone();
                     self.kit_clipboard = Some(clip);
-                    self.toast(format!("Captured {hint} for transfer"));
+                    self.toast(format!("Copied {hint} — paste it in any project"));
                     self.log_activity(
                         ActivityKind::Success,
-                        format!("Captured {hint} for cross-project transfer"),
+                        format!("Copied {hint} to the clipboard"),
                         None,
                     );
                 }

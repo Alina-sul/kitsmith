@@ -148,7 +148,8 @@ fn kit_clipboard_banner(
             });
             ui.label(
                 RichText::new(
-                    "To transfer: load the target project on the device, press Sync, then paste.",
+                    "To paste into another project: load that project on the Rytm, press Sync, \
+                     then paste. (The device only lets us write into the active project.)",
                 )
                 .color(theme::TEXT_MUTED)
                 .size(theme::FONT_META),
@@ -362,10 +363,10 @@ fn kit_list(
                 });
                 row.context_menu(|ui| {
                     if ui
-                        .add_enabled(can_capture, egui::Button::new("Copy kit for transfer"))
+                        .add_enabled(can_capture, egui::Button::new("Copy kit"))
                         .on_hover_text(
-                            "Fresh-reads this kit into the transfer clipboard. Then load \
-                             another project on the device, sync, and paste.",
+                            "Copies this kit (with its sample references) to the rytmdash \
+                             clipboard — paste it into any project.",
                         )
                         .on_disabled_hover_text("Connect the Rytm first")
                         .clicked()
