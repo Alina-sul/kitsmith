@@ -81,10 +81,10 @@ impl ExecutePanel {
                 .resizable(false)
                 .show(ctx, |ui| {
                     for line in &report.completed {
-                        ui.label(format!("✓ {line}"));
+                        ui.label(format!("✔ {line}"));
                     }
                     if let Some((step, err)) = &report.failed {
-                        ui.label(RichText::new(format!("✗ {step}: {err}")).color(theme::DANGER));
+                        ui.label(RichText::new(format!("✖ {step}: {err}")).color(theme::DANGER));
                         ui.label(
                             RichText::new(
                                 "Nothing after the failed step ran. The session backup \

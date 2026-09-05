@@ -11,6 +11,22 @@ use crate::model::names;
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     ui.horizontal_centered(|ui| {
+        let toggle = if app.ui_state.sidebar_hidden {
+            "»"
+        } else {
+            "«"
+        };
+        if ui
+            .button(toggle)
+            .on_hover_text(if app.ui_state.sidebar_hidden {
+                "Show sidebar"
+            } else {
+                "Hide sidebar"
+            })
+            .clicked()
+        {
+            app.ui_state.sidebar_hidden = !app.ui_state.sidebar_hidden;
+        }
         ui.label(
             RichText::new("rytmdash")
                 .size(theme::FONT_SECTION + 2.0)
@@ -29,7 +45,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
             {
                 app.ui_state.nav = Nav::Diagnostics;
             }
-            if ui.button("⇪ Import").clicked() {
+            if ui.button("Import").clicked() {
                 app.ui_state.nav = Nav::Import;
             }
             sync_control(app, ui, ctx);
@@ -129,7 +145,7 @@ fn sync_control(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     let in_port = app.connected_in_port();
     match app.sync.status() {
         SyncStatus::Running(progress) => {
-            if ui.button("✕").on_hover_text("Cancel sync").clicked() {
+            if ui.button("×").on_hover_text("Cancel sync").clicked() {
                 app.sync.cancel();
             }
             ui.spinner();

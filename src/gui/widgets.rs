@@ -9,9 +9,11 @@ use eframe::egui::{
 
 use crate::gui::theme;
 
-/// A colored status dot followed by a label.
+/// A colored status dot followed by a label. Painted, not a glyph, so it
+/// renders regardless of font coverage.
 pub fn status_dot(ui: &mut Ui, color: Color32, label: &str) {
-    ui.label(RichText::new("●").color(color).size(10.0));
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
+    ui.painter().circle_filled(rect.center(), 4.0, color);
     ui.label(label);
 }
 
@@ -41,14 +43,17 @@ pub fn sample_pill(ui: &mut Ui, label: &str, selected: bool) -> Response {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.label(RichText::new("~").color(theme::SAMPLE_PURPLE).strong());
-                ui.label(
-                    RichText::new(label)
-                        .color(if selected {
-                            theme::TEXT_PRIMARY
-                        } else {
-                            theme::SAMPLE_PURPLE
-                        })
-                        .size(theme::FONT_META),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(label)
+                            .color(if selected {
+                                theme::TEXT_PRIMARY
+                            } else {
+                                theme::SAMPLE_PURPLE
+                            })
+                            .size(theme::FONT_META),
+                    )
+                    .truncate(),
                 );
             });
         })
@@ -56,14 +61,18 @@ pub fn sample_pill(ui: &mut Ui, label: &str, selected: bool) -> Response {
     response.interact(Sense::click())
 }
 
-/// The six-dot drag affordance (PRD §14.4). Purely visual; pair it with a
+/// The six-dot drag affordance (PRD §14.4), painted as a 2×3 dot matrix so it
+/// renders regardless of font coverage. Purely visual; pair it with a
 /// `dnd_drag_source` wrapping the row.
 pub fn drag_handle(ui: &mut Ui) {
-    ui.label(
-        RichText::new("⠿")
-            .color(theme::TEXT_MUTED)
-            .size(theme::FONT_BODY),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 16.0), Sense::hover());
+    let painter = ui.painter();
+    for row in 0..3 {
+        for col in 0..2 {
+            let center = rect.min + egui::vec2(2.5 + col as f32 * 5.0, 3.0 + row as f32 * 5.0);
+            painter.circle_filled(center, 1.3, theme::TEXT_MUTED);
+        }
+    }
 }
 
 /// An uppercase section label, e.g. `PROJECTS`.

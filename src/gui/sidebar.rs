@@ -1,43 +1,51 @@
-//! Left sidebar (PRD §7): top-level navigation plus the project browser.
+//! Left sidebar (PRD §7): top-level navigation plus the collapsible project
+//! browser. Text-only rows — no icon glyphs, so nothing depends on font
+//! coverage.
 
-use eframe::egui::{self, RichText, ScrollArea};
+use eframe::egui::{self, CollapsingHeader, RichText, ScrollArea};
 
 use crate::gui::app::{Nav, ProjectSelection, RytmdashApp};
 use crate::gui::{theme, widgets};
 use crate::model::names;
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
-    nav_item(app, ui, Nav::Projects, "▦", "Projects");
-    nav_item(app, ui, Nav::Drive, "🖴", "+Drive");
+    nav_item(app, ui, Nav::Projects, "Projects");
+    nav_item(app, ui, Nav::Drive, "+Drive");
     let import_label = if !app.import.is_empty() {
         format!("Import ({})", app.import.len())
     } else {
         "Import".to_owned()
     };
-    nav_item(app, ui, Nav::Import, "⇪", &import_label);
-    nav_item(app, ui, Nav::Activity, "≡", "Activity");
+    nav_item(app, ui, Nav::Import, &import_label);
+    nav_item(app, ui, Nav::Activity, "Activity");
 
     if app.ui_state.nav == Nav::Projects {
-        ui.add_space(theme::GAP_L);
-        project_browser(app, ui);
+        ui.add_space(theme::GAP_M);
+        CollapsingHeader::new(
+            RichText::new("PROJECTS")
+                .color(theme::TEXT_MUTED)
+                .size(theme::FONT_META)
+                .strong(),
+        )
+        .default_open(true)
+        .show(ui, |ui| {
+            project_browser(app, ui);
+        });
     }
 
     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-        nav_item(app, ui, Nav::Diagnostics, "🔧", "Device & Diagnostics");
+        nav_item(app, ui, Nav::Diagnostics, "Device & Diagnostics");
     });
 }
 
-fn nav_item(app: &mut RytmdashApp, ui: &mut egui::Ui, nav: Nav, icon: &str, label: &str) {
+fn nav_item(app: &mut RytmdashApp, ui: &mut egui::Ui, nav: Nav, label: &str) {
     let selected = app.ui_state.nav == nav;
     let clicked = widgets::list_row(ui, selected, 34.0, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(icon).color(theme::TEXT_SECONDARY));
-            ui.label(RichText::new(label).color(if selected {
-                theme::TEXT_PRIMARY
-            } else {
-                theme::TEXT_SECONDARY
-            }));
-        });
+        ui.label(RichText::new(label).color(if selected {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        }));
     });
     if clicked {
         app.ui_state.nav = nav;
@@ -45,11 +53,9 @@ fn nav_item(app: &mut RytmdashApp, ui: &mut egui::Ui, nav: Nav, icon: &str, labe
 }
 
 /// The project list (PRD §7.2–7.3): the synced active project first, then all
-/// +Drive project slots. Slot contents are not indexed yet (WP11), and the UI
-/// says so instead of faking them.
+/// +Drive project slots. Slot contents are not indexed yet (WP11); the
+/// workspace says so when one is selected instead of faking them.
 fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
-    widgets::section_label(ui, "PROJECTS");
-    ui.add_space(4.0);
     ui.add(
         egui::TextEdit::singleline(&mut app.ui_state.project_search)
             .hint_text("Search projects…")
@@ -92,18 +98,14 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                             .color(theme::TEXT_MUTED)
                             .monospace(),
                     );
-                    ui.label(
-                        RichText::new(names::project_display_name(name, *id).text())
-                            .color(theme::TEXT_PRIMARY)
-                            .strong(),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(names::project_display_name(name, *id).text())
+                                .color(theme::TEXT_PRIMARY)
+                                .strong(),
+                        )
+                        .truncate(),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new("Not indexed")
-                                .color(theme::TEXT_MUTED)
-                                .size(theme::FONT_META),
-                        );
-                    });
                 });
             });
             if clicked {

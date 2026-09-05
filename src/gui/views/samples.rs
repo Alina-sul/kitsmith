@@ -173,7 +173,7 @@ fn slot_inspector(
     ui.horizontal(|ui| {
         widgets::section_label(ui, &format!("SLOT {slot:03}"));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("✕").on_hover_text("Close").clicked() {
+            if ui.button("×").on_hover_text("Close").clicked() {
                 *selected = None;
             }
         });

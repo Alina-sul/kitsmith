@@ -81,14 +81,13 @@ pub fn show(
     ScrollArea::vertical().show(ui, |ui| {
         for (index, entry) in entries.iter().rev().enumerate() {
             ui.horizontal(|ui| {
-                let (glyph, color) = match entry.kind {
-                    ActivityKind::Info => ("·", theme::TEXT_SECONDARY),
-                    ActivityKind::Success => ("✓", theme::SUCCESS),
-                    ActivityKind::Warning => ("⚠", theme::WARNING),
-                    ActivityKind::Error => ("✗", theme::DANGER),
+                let color = match entry.kind {
+                    ActivityKind::Info => theme::TEXT_SECONDARY,
+                    ActivityKind::Success => theme::SUCCESS,
+                    ActivityKind::Warning => theme::WARNING,
+                    ActivityKind::Error => theme::DANGER,
                 };
-                ui.label(RichText::new(glyph).color(color));
-                ui.label(&entry.title);
+                widgets::status_dot(ui, color, &entry.title);
                 ui.label(
                     RichText::new(ago(entry.at))
                         .color(theme::TEXT_MUTED)

@@ -69,7 +69,7 @@ pub const FONT_META: f32 = 12.0;
 pub const APP_BAR_HEIGHT: f32 = 52.0;
 pub const SIDEBAR_WIDTH: f32 = 260.0;
 pub const INSPECTOR_WIDTH: f32 = 320.0;
-pub const KIT_LIST_WIDTH: f32 = 250.0;
+pub const KIT_LIST_WIDTH: f32 = 220.0;
 pub const LIST_ROW_HEIGHT: f32 = 40.0;
 pub const KIT_ROW_HEIGHT: f32 = 52.0;
 /// Content gap scale.
@@ -79,7 +79,7 @@ pub const GAP_L: f32 = 16.0;
 pub const GAP_XL: f32 = 24.0;
 
 /// Pad card bounds (PRD §14.1); actual width flexes with the grid.
-pub const PAD_MIN_WIDTH: f32 = 150.0;
+pub const PAD_MIN_WIDTH: f32 = 120.0;
 pub const PAD_MAX_WIDTH: f32 = 220.0;
 pub const PAD_HEIGHT: f32 = 112.0;
 pub const PAD_GAP: f32 = 10.0;

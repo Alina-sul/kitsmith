@@ -39,17 +39,19 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             kit_list(ui, model, &linked, state);
         });
 
-    egui::Panel::right("kit-inspector")
-        .default_size(theme::INSPECTOR_WIDTH)
-        .resizable(false)
-        .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
-        .show(ui, |ui| {
-            if state.selected_track.is_some() {
-                track_inspector(ui, model, state);
-            } else {
-                sample_rail(ui, model, state);
-            }
-        });
+    if state.selected_track.is_some() || !state.rail_hidden {
+        egui::Panel::right("kit-inspector")
+            .default_size(theme::INSPECTOR_WIDTH)
+            .resizable(true)
+            .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
+            .show(ui, |ui| {
+                if state.selected_track.is_some() {
+                    track_inspector(ui, model, state);
+                } else {
+                    sample_rail(ui, model, state);
+                }
+            });
+    }
 
     egui::CentralPanel::default()
         .frame(Frame::new().inner_margin(Margin::symmetric(12, 4)))
@@ -57,11 +59,15 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             if let Some(kit) = model.kits.get(selected_kit) {
                 kit_header(ui, model, kit);
                 ui.add_space(theme::GAP_S);
-                mode_switch(ui);
+                mode_switch(ui, state);
                 ui.add_space(theme::GAP_M);
-                if let Some(assign) = pad_grid(ui, model, kit, state) {
-                    pending = Some(assign);
-                }
+                egui::ScrollArea::both()
+                    .id_salt("pad-grid-scroll")
+                    .show(ui, |ui| {
+                        if let Some(assign) = pad_grid(ui, model, kit, state) {
+                            pending = Some(assign);
+                        }
+                    });
             }
         });
 
@@ -128,10 +134,15 @@ fn kit_list(
                                     .color(theme::TEXT_MUTED)
                                     .monospace(),
                             );
-                            ui.label(
-                                RichText::new(names::kit_display_name(&kit.name, kit.index).text())
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(
+                                        names::kit_display_name(&kit.name, kit.index).text(),
+                                    )
                                     .color(theme::TEXT_PRIMARY)
                                     .strong(),
+                                )
+                                .truncate(),
                             );
                         });
                         if !patterns.is_empty() {
@@ -214,13 +225,25 @@ fn kit_header(ui: &mut egui::Ui, model: &ProjectModel, kit: &KitModel) {
 /// Tracks / Scenes / Performance segmented control (PRD §13). Scenes and
 /// Performance read support arrives with a later milestone; the segments are
 /// disabled with an explanation rather than hidden, for discoverability.
-fn mode_switch(ui: &mut egui::Ui) {
+fn mode_switch(ui: &mut egui::Ui, state: &mut crate::gui::app::KitsState) {
     ui.horizontal(|ui| {
         let _ = ui.selectable_label(true, "Tracks");
         ui.add_enabled(false, egui::Button::selectable(false, "Scenes"))
             .on_disabled_hover_text("Scene visualization arrives with a later milestone.");
         ui.add_enabled(false, egui::Button::selectable(false, "Performance"))
             .on_disabled_hover_text("Performance visualization arrives with a later milestone.");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if state.selected_track.is_none() {
+                let label = if state.rail_hidden {
+                    "Show sample slots"
+                } else {
+                    "Hide sample slots"
+                };
+                if ui.button(label).clicked() {
+                    state.rail_hidden = !state.rail_hidden;
+                }
+            }
+        });
     });
 }
 
@@ -393,7 +416,7 @@ fn track_inspector(
                 .strong(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("✕").on_hover_text("Close inspector").clicked() {
+            if ui.button("×").on_hover_text("Close inspector").clicked() {
                 state.selected_track = None;
             }
         });

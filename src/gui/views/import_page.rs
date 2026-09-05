@@ -67,7 +67,7 @@ pub fn show(
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("✕").on_hover_text("Remove from queue").clicked() {
+                    if ui.button("×").on_hover_text("Remove from queue").clicked() {
                         to_remove = Some(index);
                     }
                     status_cell(ui, &item.state);

@@ -65,6 +65,8 @@ pub struct KitsState {
     pub selected_track: Option<usize>,
     /// Sample slot being traced — pads using it get a purple ring.
     pub traced_slot: Option<u8>,
+    /// Hides the sample-slot rail when no track inspector is open.
+    pub rail_hidden: bool,
 }
 
 /// All per-frame-persistent UI state, separate from device/model state.
@@ -77,6 +79,8 @@ pub struct UiState {
     pub kits: KitsState,
     pub selected_sample_slot: Option<u8>,
     pub selected_pattern: Option<usize>,
+    /// Collapses the whole left sidebar (toggled from the top bar).
+    pub sidebar_hidden: bool,
 }
 
 /// When the last sync finished and how complete it was.
@@ -244,19 +248,21 @@ impl eframe::App for RytmdashApp {
                 top_bar::show(self, ui, &ctx);
             });
 
-        egui::Panel::left("sidebar")
-            .default_size(theme::SIDEBAR_WIDTH)
-            .resizable(true)
-            .min_size(200.0)
-            .max_size(320.0)
-            .frame(
-                Frame::new()
-                    .fill(theme::BG_SIDEBAR)
-                    .inner_margin(Margin::same(10)),
-            )
-            .show(ui, |ui| {
-                sidebar::show(self, ui);
-            });
+        if !self.ui_state.sidebar_hidden {
+            egui::Panel::left("sidebar")
+                .default_size(theme::SIDEBAR_WIDTH)
+                .resizable(true)
+                .min_size(200.0)
+                .max_size(320.0)
+                .frame(
+                    Frame::new()
+                        .fill(theme::BG_SIDEBAR)
+                        .inner_margin(Margin::same(10)),
+                )
+                .show(ui, |ui| {
+                    sidebar::show(self, ui);
+                });
+        }
 
         egui::CentralPanel::default()
             .frame(
