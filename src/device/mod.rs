@@ -5,6 +5,7 @@
 //! performs the inquiry handshake, and publishes [`detect::DeviceState`].
 
 pub mod detect;
+pub mod files;
 pub mod objects;
 pub mod samples;
 pub mod watcher;

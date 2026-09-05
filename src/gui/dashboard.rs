@@ -56,7 +56,7 @@ pub fn show(
         ui.add_space(10.0);
 
         if let Some(kit) = model.kits.get(selected) {
-            if let Some(assign) = pad_grid(ui, kit, state) {
+            if let Some(assign) = pad_grid(ui, model, kit, state) {
                 dropped = Some(assign);
             }
         }
@@ -104,6 +104,7 @@ fn kit_strip(
 /// The 12 pads, laid out like the hardware: 3 rows of 4, BD row at the bottom.
 fn pad_grid(
     ui: &mut egui::Ui,
+    model: &ProjectModel,
     kit: &KitModel,
     state: &mut DashboardState,
 ) -> Option<PendingAssign> {
@@ -114,7 +115,7 @@ fn pad_grid(
     for row in [[8, 9, 10, 11], [4, 5, 6, 7], [0, 1, 2, 3]] {
         ui.horizontal(|ui| {
             for track in row {
-                if let Some(assign) = pad(ui, kit, track, state) {
+                if let Some(assign) = pad(ui, model, kit, track, state) {
                     dropped = Some(assign);
                 }
             }
@@ -127,6 +128,7 @@ fn pad_grid(
 /// One pad tile: identity stripe, sound name, machine, slot chip. Drop zone.
 fn pad(
     ui: &mut egui::Ui,
+    model: &ProjectModel,
     kit: &KitModel,
     track: usize,
     state: &mut DashboardState,
@@ -169,6 +171,9 @@ fn pad(
             ui.add_space(2.0);
             ui.label(RichText::new(sound.name.trim()).size(14.0));
             ui.label(RichText::new(&sound.machine).weak().small());
+            if let Some(name) = sound.sample_slot.and_then(|s| model.sample_name(s)) {
+                ui.label(RichText::new(name).color(SLOT_COLOR).small());
+            }
         });
     });
 
@@ -207,6 +212,14 @@ fn slot_rail(ui: &mut egui::Ui, model: &ProjectModel, state: &mut DashboardState
             ui.horizontal(|ui| {
                 if slot_chip(ui, *slot, selected).clicked() {
                     state.selected_slot = (!selected).then_some(*slot);
+                }
+                match model.sample_name(*slot) {
+                    Some(name) => {
+                        ui.label(RichText::new(name).small());
+                    }
+                    None => {
+                        ui.label(RichText::new("(name unknown — sync)").weak().small());
+                    }
                 }
                 ui.label(RichText::new(format!("×{}", uses.len())).weak());
             });

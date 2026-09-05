@@ -60,6 +60,29 @@ impl RytmdashApp {
                     port_list(ui, "MIDI inputs", &snapshot.ports.inputs);
                     port_list(ui, "MIDI outputs", &snapshot.ports.outputs);
                 });
+                if let Some(model) = &self.model {
+                    if !model.projects.is_empty() {
+                        ui.menu_button(format!("projects ({})", model.projects.len()), |ui| {
+                            ui.label(
+                                RichText::new(
+                                    "The dashboard mirrors the *active* project. To work on \
+                                     another one: load it on the device (GLOBAL SETTINGS → \
+                                     PROJECT), then press ⟳ Sync.",
+                                )
+                                .weak()
+                                .small(),
+                            );
+                            ui.separator();
+                            egui::ScrollArea::vertical()
+                                .max_height(300.0)
+                                .show(ui, |ui| {
+                                    for project in &model.projects {
+                                        ui.label(format!("{:>3} · {}", project.id, project.name));
+                                    }
+                                });
+                        });
+                    }
+                }
                 if let Some(note) = &self.last_sync_note {
                     ui.label(RichText::new(note).weak().small());
                 }

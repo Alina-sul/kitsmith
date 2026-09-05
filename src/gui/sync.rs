@@ -108,7 +108,21 @@ fn run_sync(
     });
 
     match outcome {
-        Ok(SyncOutcome::Complete { model, missed }) => {
+        Ok(SyncOutcome::Complete { mut model, missed }) => {
+            // Second phase: sample-slot names + project list over the file
+            // protocol. Optional — a device that ignores it leaves the model
+            // valid, just without names.
+            let _ =
+                crate::device::files::enrich_model(&mut link, &mut model, |stage, done, total| {
+                    *status.lock().expect("sync status lock poisoned") =
+                        SyncStatus::Running(crate::device::objects::SyncProgress {
+                            stage,
+                            done,
+                            total,
+                            missed,
+                        });
+                    on_change();
+                });
             if let Err(e) = cache::save(&model) {
                 return SyncStatus::Failed(format!("synced, but cache write failed: {e}"));
             }

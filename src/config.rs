@@ -32,3 +32,6 @@ pub const SDS_OPEN_LOOP_REST: Duration = Duration::from_millis(20);
 
 /// NAK-driven resends of one packet before giving up.
 pub const SDS_RETRY_LIMIT: usize = 8;
+
+/// How long to wait for a file-protocol reply.
+pub const FILE_REPLY_TIMEOUT: Duration = Duration::from_millis(2000);

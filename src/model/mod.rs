@@ -36,6 +36,31 @@ pub struct ProjectModel {
     pub kits: Vec<KitModel>,
     pub patterns: Vec<PatternModel>,
     pub pool_sounds: Vec<SoundModel>,
+    /// Names of the filled RAM sample slots (file protocol; empty until a
+    /// sync with file-protocol support ran).
+    #[serde(default)]
+    pub samples: Vec<SampleSlotInfo>,
+    /// The +Drive project slots (file protocol).
+    #[serde(default)]
+    pub projects: Vec<ProjectInfo>,
+}
+
+/// One filled sample slot with its +Drive identity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SampleSlotInfo {
+    pub slot: u8,
+    /// File name without directories (display name).
+    pub name: String,
+    /// Full +Drive path.
+    pub path: String,
+    pub size: u32,
+}
+
+/// One +Drive project slot.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectInfo {
+    pub id: u32,
+    pub name: String,
 }
 
 /// One kit: 12 track Sounds + a name.
@@ -105,6 +130,9 @@ impl ProjectModel {
             kits,
             patterns,
             pool_sounds,
+            // Filled by the file-protocol enrichment pass after a sync.
+            samples: Vec::new(),
+            projects: Vec::new(),
         }
     }
 
@@ -124,6 +152,14 @@ impl ProjectModel {
             }
         }
         usage
+    }
+
+    /// Display name of a sample slot, when the file protocol resolved one.
+    pub fn sample_name(&self, slot: u8) -> Option<&str> {
+        self.samples
+            .iter()
+            .find(|s| s.slot == slot)
+            .map(|s| s.name.as_str())
     }
 
     /// Kits that at least one pattern links to.
