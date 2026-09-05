@@ -55,11 +55,28 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             app.ui_state.drive_path = target;
         }
     });
-    ui.label(
-        RichText::new("Right-click a sample to load it into a free project slot.")
-            .color(theme::TEXT_MUTED)
-            .size(theme::FONT_META),
-    );
+    match app.ui_state.pending_pad_assign {
+        Some((kit_index, track)) => {
+            ui.horizontal(|ui| {
+                widgets::badge(ui, "ASSIGNING", theme::SAMPLE_PURPLE);
+                ui.label(format!(
+                    "Pick a sample for {} (kit {:02}) — right-click it and choose “Load + assign”.",
+                    crate::model::names::track_label(track),
+                    kit_index + 1
+                ));
+                if ui.button("Cancel").clicked() {
+                    app.ui_state.pending_pad_assign = None;
+                }
+            });
+        }
+        None => {
+            ui.label(
+                RichText::new("Right-click a sample to load it into a free project slot.")
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+            );
+        }
+    }
     ui.add_space(theme::GAP_S);
 
     let path = app.ui_state.drive_path.clone();
@@ -122,8 +139,16 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                                 }
                             });
                         });
+                        let assign_target = app.ui_state.pending_pad_assign;
                         row.context_menu(|ui| {
-                            if ui.button("Load into project slot…").clicked() {
+                            let label = match assign_target {
+                                Some((_, track)) => format!(
+                                    "Load + assign to {}…",
+                                    crate::model::names::track_label(track)
+                                ),
+                                None => "Load into project slot…".to_owned(),
+                            };
+                            if ui.button(label).clicked() {
                                 load = Some(full.clone());
                                 ui.close();
                             }

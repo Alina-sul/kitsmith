@@ -20,8 +20,16 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     let mut open_paste = false;
     let mut clear_clipboard = false;
 
+    let browsing = app.is_browsing_snapshot();
+    let project_sel = app.ui_state.project;
     {
-        let Some(model) = app.model.as_ref() else {
+        let model = match project_sel {
+            crate::gui::app::ProjectSelection::Active => app.model.as_ref(),
+            crate::gui::app::ProjectSelection::Slot(id) => {
+                app.raw_models.get(&id).and_then(Option::as_ref)
+            }
+        };
+        let Some(model) = model else {
             return;
         };
         let clipboard = &app.clipboard;
@@ -52,28 +60,41 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         egui::CentralPanel::default()
             .frame(Frame::new().inner_margin(Margin::symmetric(0, 4)))
             .show(ui, |ui| {
-                if let Some(clip) = clipboard {
-                    clipboard_banner(ui, clip, &mut open_paste, &mut clear_clipboard);
-                    ui.add_space(theme::GAP_S);
+                if !browsing {
+                    if let Some(clip) = clipboard {
+                        clipboard_banner(ui, clip, &mut open_paste, &mut clear_clipboard);
+                        ui.add_space(theme::GAP_S);
+                    }
                 }
                 ui.label(
                     RichText::new(format!("{} patterns link to a kit", model.patterns.len()))
                         .color(theme::TEXT_SECONDARY),
                 );
                 ui.add_space(theme::GAP_S);
-                ui.label(
-                    RichText::new(
-                        "Right-click a pattern to copy it — then paste it into any project.",
-                    )
-                    .color(theme::TEXT_MUTED)
-                    .size(theme::FONT_META),
-                );
+                if browsing {
+                    ui.label(
+                        RichText::new(
+                            "Snapshot view — copying patterns out of backups is not supported \
+                             yet (kits are: use the Kits tab).",
+                        )
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::FONT_META),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new(
+                            "Right-click a pattern to copy it — then paste it into any project.",
+                        )
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::FONT_META),
+                    );
+                }
                 ScrollArea::vertical().show(ui, |ui| {
                     pattern_map(
                         ui,
                         model,
                         selected,
-                        connected.is_some() && !capturing,
+                        !browsing && connected.is_some() && !capturing,
                         &mut request_capture,
                     );
                 });

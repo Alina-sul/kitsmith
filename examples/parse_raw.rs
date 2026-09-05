@@ -51,6 +51,22 @@ fn main() {
             .collect::<Vec<_>>()
     );
 
+    // Full dashboard-model decode (kits + patterns through libanalogrytm).
+    match rytmdash::device::projfile::to_project_model(&bytes, &[]) {
+        Ok(model) => {
+            let kit = &model.kits[0];
+            println!(
+                "to_project_model OK: {} kits, {} patterns; kit 01 '{}' track 1 machine {} slot {:?}",
+                model.kits.len(),
+                model.patterns.len(),
+                kit.name.trim_matches('\0').trim(),
+                kit.sounds[0].machine,
+                kit.sounds[0].sample_slot,
+            );
+        }
+        Err(e) => println!("to_project_model FAILED: {e}"),
+    }
+
     // End-to-end check of copy-from-backup: convert the first in-use kit.
     if let Some(kit) = snapshot.kits.iter().find(|k| snapshot.kit_in_use(k.index)) {
         match rytmdash::transfer::capture_kit_from_backup(&bytes, &snapshot, "backup", kit.index) {

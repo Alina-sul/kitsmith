@@ -10,6 +10,16 @@ use crate::model::names::{self, ResolvedName};
 use crate::model::pattern_display_name;
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+    if app.is_browsing_snapshot() {
+        ui.label(
+            RichText::new(
+                "The Sound Pool region of project backups is not decoded yet — load the \
+                 project on the device and sync to inspect its pool.",
+            )
+            .color(theme::TEXT_MUTED),
+        );
+        return;
+    }
     let Some(model) = app.model.as_ref() else {
         return;
     };

@@ -8,7 +8,13 @@ use crate::gui::{theme, widgets};
 use crate::model::SAMPLE_SLOT_COUNT;
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
-    let Some(model) = app.model.as_ref() else {
+    let model = match app.ui_state.project {
+        crate::gui::app::ProjectSelection::Active => app.model.as_ref(),
+        crate::gui::app::ProjectSelection::Slot(id) => {
+            app.raw_models.get(&id).and_then(Option::as_ref)
+        }
+    };
+    let Some(model) = model else {
         return;
     };
     let linked_kits = model.linked_kit_indices().len();

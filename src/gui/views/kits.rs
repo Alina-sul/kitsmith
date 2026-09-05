@@ -18,14 +18,23 @@ use super::SlotDrag;
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let connected = app.connected_in_port();
+    let browsing = app.is_browsing_snapshot();
+    let project_sel = app.ui_state.project;
     let can_capture = connected.is_some() && !app.capture.is_running();
     let mut request_capture_kit: Option<usize> = None;
+    let mut request_pad_assign: Option<(usize, usize)> = None;
     let mut open_kit_paste = false;
     let mut clear_kit_clipboard = false;
     let mut pending = None;
 
     {
-        let Some(model) = app.model.as_ref() else {
+        let model = match project_sel {
+            crate::gui::app::ProjectSelection::Active => app.model.as_ref(),
+            crate::gui::app::ProjectSelection::Slot(id) => {
+                app.raw_models.get(&id).and_then(Option::as_ref)
+            }
+        };
+        let Some(model) = model else {
             return;
         };
         let kit_clipboard = &app.kit_clipboard;
@@ -40,6 +49,9 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             .unwrap_or(0);
         state.selected_kit = Some(selected_kit);
 
+        // Copying a kit needs the device only when the source is the live
+        // active project; snapshot kits copy straight from the backup file.
+        let can_copy_kit = browsing || can_capture;
         egui::Panel::left("kit-list")
             .default_size(theme::KIT_LIST_WIDTH)
             .resizable(false)
@@ -50,7 +62,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                     model,
                     &linked,
                     state,
-                    can_capture,
+                    can_copy_kit,
                     &mut request_capture_kit,
                 );
             });
@@ -72,9 +84,16 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         egui::CentralPanel::default()
             .frame(Frame::new().inner_margin(Margin::symmetric(12, 4)))
             .show(ui, |ui| {
-                if let Some(clip) = kit_clipboard {
-                    kit_clipboard_banner(ui, clip, &mut open_kit_paste, &mut clear_kit_clipboard);
-                    ui.add_space(theme::GAP_S);
+                if !browsing {
+                    if let Some(clip) = kit_clipboard {
+                        kit_clipboard_banner(
+                            ui,
+                            clip,
+                            &mut open_kit_paste,
+                            &mut clear_kit_clipboard,
+                        );
+                        ui.add_space(theme::GAP_S);
+                    }
                 }
                 if let Some(kit) = model.kits.get(selected_kit) {
                     kit_header(ui, model, kit);
@@ -84,7 +103,9 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                     egui::ScrollArea::both()
                         .id_salt("pad-grid-scroll")
                         .show(ui, |ui| {
-                            if let Some(assign) = pad_grid(ui, model, kit, state) {
+                            if let Some(assign) =
+                                pad_grid(ui, model, kit, state, browsing, &mut request_pad_assign)
+                            {
                                 pending = Some(assign);
                             }
                         });
@@ -92,11 +113,19 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             });
     }
 
-    if pending.is_some() {
+    // Snapshot browsing is read-only: drops must not open the assign flow.
+    if pending.is_some() && !browsing {
         app.execute.pending = pending;
     }
+    if let Some((kit_index, track)) = request_pad_assign {
+        app.ui_state.pending_pad_assign = Some((kit_index, track));
+        app.ui_state.nav = crate::gui::app::Nav::Drive;
+    }
     if let Some(index) = request_capture_kit {
-        if let (Some(port), Some(model)) = (connected.clone(), app.model.clone()) {
+        if let crate::gui::app::ProjectSelection::Slot(id) = project_sel {
+            // Copy straight out of the backup — no device I/O needed.
+            app.copy_kit_from_backup(id, index);
+        } else if let (Some(port), Some(model)) = (connected.clone(), app.model.clone()) {
             let repaint = ctx.clone();
             app.capture.start(
                 port,
@@ -476,6 +505,8 @@ fn pad_grid(
     model: &ProjectModel,
     kit: &KitModel,
     state: &mut crate::gui::app::KitsState,
+    browsing: bool,
+    request_pad_assign: &mut Option<(usize, usize)>,
 ) -> Option<PendingAssign> {
     let mut dropped = None;
     let card_width = ((ui.available_width() - 3.0 * theme::PAD_GAP) / 4.0)
@@ -485,7 +516,16 @@ fn pad_grid(
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = theme::PAD_GAP;
             for track in row {
-                if let Some(assign) = pad_card(ui, model, kit, track, card_width, state) {
+                if let Some(assign) = pad_card(
+                    ui,
+                    model,
+                    kit,
+                    track,
+                    card_width,
+                    state,
+                    browsing,
+                    request_pad_assign,
+                ) {
                     dropped = Some(assign);
                 }
             }
@@ -503,7 +543,9 @@ fn pad_grid(
 }
 
 /// One pad card (PRD §14.2): track label, Sound name, machine, sample row.
-/// Click selects the track; a slot drop returns a pending assignment.
+/// Click selects the track; a slot drop returns a pending assignment;
+/// right-click offers assigning a new +Drive sample.
+#[allow(clippy::too_many_arguments)]
 fn pad_card(
     ui: &mut egui::Ui,
     model: &ProjectModel,
@@ -511,6 +553,8 @@ fn pad_card(
     track: usize,
     width: f32,
     state: &mut crate::gui::app::KitsState,
+    browsing: bool,
+    request_pad_assign: &mut Option<(usize, usize)>,
 ) -> Option<PendingAssign> {
     let sound = kit.sounds.get(track)?;
     let color = theme::TRACK_COLORS[track];
@@ -592,14 +636,29 @@ fn pad_card(
         });
     });
 
-    if let Some(slot) = toggle_trace {
-        state.traced_slot = (state.traced_slot != Some(slot)).then_some(slot);
-    } else if zone_response
+    let card = zone_response
         .response
         .interact(Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    card.context_menu(|ui| {
+        if ui
+            .add_enabled(!browsing, egui::Button::new("Assign sample from +Drive…"))
+            .on_hover_text(
+                "Opens the +Drive browser; the chosen sample is loaded into a free project \
+                 slot and then assigned to this pad.",
+            )
+            .on_disabled_hover_text(
+                "Snapshots are read-only — load this project on the device to edit it",
+            )
+            .clicked()
+        {
+            *request_pad_assign = Some((kit.index, track));
+            ui.close();
+        }
+    });
+    if let Some(slot) = toggle_trace {
+        state.traced_slot = (state.traced_slot != Some(slot)).then_some(slot);
+    } else if card.clicked() {
         state.selected_track = (state.selected_track != Some(track)).then_some(track);
     }
 

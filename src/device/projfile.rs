@@ -203,6 +203,96 @@ pub fn kit_raw_record(bytes: &[u8], kit_index: usize) -> Option<&[u8]> {
     bytes.get(base..base + KIT_SIZE)
 }
 
+/// The raw pattern record bytes for `pattern_index`.
+pub fn pattern_raw_record(bytes: &[u8], pattern_index: usize) -> Option<&[u8]> {
+    if !is_raw_project(bytes) || pattern_index > 127 {
+        return None;
+    }
+    let base = PATTERNS_OFFSET + pattern_index * PATTERN_SIZE;
+    bytes.get(base..base + PATTERN_SIZE)
+}
+
+/// Decodes a raw project payload into a full [`crate::model::ProjectModel`]
+/// by re-encoding every kit and pattern record through libanalogrytm and
+/// feeding them to rytm-rs — the same pipeline a live sync uses. Sample-slot
+/// names are filled from `known_samples` where the content hash matches
+/// (typically the active project's resolved slots).
+///
+/// The Sound Pool region of the file is not mapped yet, so the result is
+/// flagged `dependency_scan = false`: pool-sound sample references are
+/// unknown and cleanup-grade conclusions must not be drawn.
+pub fn to_project_model(
+    bytes: &[u8],
+    known_samples: &[crate::model::SampleSlotInfo],
+) -> Result<crate::model::ProjectModel, String> {
+    use rytm_rs::RytmProject;
+
+    if !is_raw_project(bytes) {
+        return Err("not a raw project payload".into());
+    }
+    let mut rytm = RytmProject::try_default().map_err(|e| e.to_string())?;
+    let mut skipped = 0usize;
+    for index in 0..128 {
+        // Patterns first so their plock pools link into the kits.
+        if let Some(raw) = pattern_raw_record(bytes, index) {
+            match crate::device::rawconv::pattern_raw_to_sysex(raw, index).and_then(|syx| {
+                rytm.update_from_sysex_response(&syx)
+                    .map_err(|e| e.to_string())
+            }) {
+                Ok(()) => {}
+                Err(_) => skipped += 1,
+            }
+        }
+    }
+    for index in 0..128 {
+        if let Some(raw) = kit_raw_record(bytes, index) {
+            match crate::device::rawconv::kit_raw_to_sysex(raw, index).and_then(|syx| {
+                rytm.update_from_sysex_response(&syx)
+                    .map_err(|e| e.to_string())
+            }) {
+                Ok(()) => {}
+                Err(_) => skipped += 1,
+            }
+        }
+    }
+    if skipped > 64 {
+        return Err(format!(
+            "{skipped} records failed to decode — refusing to guess"
+        ));
+    }
+
+    let mut model = crate::model::ProjectModel::from_rytm(&rytm);
+    // Pool sounds are NOT stored in a mapped region — the defaults that
+    // from_rytm read are meaningless. Drop them and mark incompleteness.
+    model.pool_sounds.clear();
+    model.dependency_scan = false;
+
+    let snapshot_samples: Vec<RawSampleSlot> = (1..=127u8)
+        .filter_map(|slot| {
+            let base = SAMPLES_OFFSET + usize::from(slot) * SAMPLE_ENTRY_SIZE;
+            let hash = u32::from_be_bytes(bytes[base..base + 4].try_into().ok()?);
+            let size = u32::from_be_bytes(bytes[base + 4..base + 8].try_into().ok()?);
+            (hash != 0 && size != 0).then_some(RawSampleSlot { slot, hash, size })
+        })
+        .collect();
+    model.samples = snapshot_samples
+        .iter()
+        .map(|s| {
+            let known = known_samples
+                .iter()
+                .find(|k| k.hash == s.hash && k.size == s.size);
+            crate::model::SampleSlotInfo {
+                slot: s.slot,
+                name: known.map(|k| k.name.clone()).unwrap_or_default(),
+                path: known.map(|k| k.path.clone()).unwrap_or_default(),
+                size: s.size,
+                hash: s.hash,
+            }
+        })
+        .collect();
+    Ok(model)
+}
+
 /// Reads a fixed-capacity, NUL-terminated device name; non-ASCII bytes are
 /// rendered as their low-ASCII equivalent rather than dropped.
 fn read_name(bytes: &[u8], offset: usize, max_len: usize) -> String {

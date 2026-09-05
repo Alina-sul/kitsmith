@@ -10,7 +10,13 @@ use crate::model::names::{self, ResolvedName};
 use crate::model::{pattern_display_name, ProjectModel, SAMPLE_SLOT_COUNT};
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
-    let Some(model) = app.model.as_ref() else {
+    let model = match app.ui_state.project {
+        crate::gui::app::ProjectSelection::Active => app.model.as_ref(),
+        crate::gui::app::ProjectSelection::Slot(id) => {
+            app.raw_models.get(&id).and_then(Option::as_ref)
+        }
+    };
+    let Some(model) = model else {
         return;
     };
     let usage = model.slot_usage();

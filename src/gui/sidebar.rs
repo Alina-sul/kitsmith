@@ -71,6 +71,19 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             .desired_width(f32::INFINITY),
     );
     backup_controls(app, ui);
+    ui.horizontal(|ui| {
+        ui.toggle_value(&mut app.ui_state.rearrange, "Rearrange")
+            .on_hover_text(
+                "Shows empty slots and lets you drag a project onto one to copy it there.",
+            );
+        if app.ui_state.rearrange {
+            ui.label(
+                RichText::new("drag a project onto an empty slot")
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+            );
+        }
+    });
     ui.add_space(theme::GAP_S);
 
     let mut select = None;
@@ -95,6 +108,7 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         }
         let query = app.ui_state.project_search.to_lowercase();
         let busy = app.fileops.is_running();
+        let rearrange = app.ui_state.rearrange;
         for id in 1..=128u32 {
             match model.projects.iter().find(|p| p.id == id) {
                 Some(p) => {
@@ -118,15 +132,17 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                         &p.name,
                         alias.as_deref(),
                         busy,
+                        rearrange,
                         &mut select,
                         &mut rename_req,
                         &mut copy_req,
                     );
                 }
                 None => {
-                    // Empty slots show only when not searching; they are the
-                    // drop targets for project copies (PRD §7.4).
-                    if query.is_empty() {
+                    // Empty slots show only in Rearrange mode (and never
+                    // while searching); they are the drop targets for
+                    // project copies (PRD §7.4).
+                    if rearrange && query.is_empty() {
                         if let Some(src) = empty_slot_row(ui, id) {
                             drop_req = Some((src, id));
                         }
@@ -166,15 +182,19 @@ fn project_row(
     name: &str,
     alias: Option<&str>,
     ops_busy: bool,
+    rearrange: bool,
     select: &mut Option<ProjectSelection>,
     rename_req: &mut Option<(u32, String)>,
     copy_req: &mut Option<u32>,
 ) {
     let selected = app.ui_state.project == ProjectSelection::Slot(id);
-    let drag_id = egui::Id::new(("project-drag", id));
-    let response = ui
-        .dnd_drag_source(drag_id, ProjectDrag { src: id }, |ui| {
-            let _ = widgets::list_row(ui, selected, theme::LIST_ROW_HEIGHT, |ui| {
+    let mut row_response: Option<egui::Response> = None;
+    let content = |ui: &mut egui::Ui| {
+        row_response = Some(widgets::list_row(
+            ui,
+            selected,
+            theme::LIST_ROW_HEIGHT,
+            |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(format!("{id:03}"))
@@ -198,9 +218,19 @@ fn project_row(
                         ));
                     }
                 });
-            });
-        })
-        .response;
+            },
+        ));
+    };
+    // Rows are drag sources only in Rearrange mode; normally they just
+    // select on click.
+    let response = if rearrange {
+        let drag_id = egui::Id::new(("project-drag", id));
+        ui.dnd_drag_source(drag_id, ProjectDrag { src: id }, content)
+            .response
+    } else {
+        ui.scope(content);
+        row_response.expect("list_row rendered")
+    };
     response.context_menu(|ui| {
         if ui.button("View").clicked() {
             *select = Some(ProjectSelection::Slot(id));

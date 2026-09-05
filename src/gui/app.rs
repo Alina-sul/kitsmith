@@ -109,6 +109,11 @@ pub struct UiState {
     pub load_sample_slot: u8,
     /// Current +Drive browser directory.
     pub drive_path: String,
+    /// Pad waiting for a +Drive sample: `(kit_index, track)`. Set from the
+    /// pad's context menu; consumed after the loaded sample is assigned.
+    pub pending_pad_assign: Option<(usize, usize)>,
+    /// Sidebar "Rearrange" mode: shows empty slots and enables project drag.
+    pub rearrange: bool,
 }
 
 /// When the last sync finished and how complete it was.
@@ -135,6 +140,8 @@ pub struct RytmdashApp {
     /// Parsed project snapshots from raw backups (`None` = unparseable),
     /// loaded lazily per slot.
     pub(crate) raw_snapshots: HashMap<u32, Option<RawProjectSnapshot>>,
+    /// Full dashboard models decoded from raw backups, lazily per slot.
+    pub(crate) raw_models: HashMap<u32, Option<ProjectModel>>,
     pub(crate) ui_state: UiState,
     pub(crate) last_sync: Option<SyncInfo>,
     /// Objects the last sync could not read (for Diagnostics).
@@ -165,6 +172,7 @@ impl RytmdashApp {
             clipboard: transfer::load(),
             kit_clipboard: transfer::load_kit(),
             raw_snapshots: HashMap::new(),
+            raw_models: HashMap::new(),
             ui_state: UiState::default(),
             last_sync: None,
             sync_misses: Vec::new(),
@@ -210,6 +218,69 @@ impl RytmdashApp {
         let snapshot = cache::load_project_backup(&cache::default_dir(), slot)
             .and_then(|bytes| projfile::parse_raw_project(&bytes));
         self.raw_snapshots.insert(slot, snapshot);
+    }
+
+    /// Ensures the full dashboard model for a backed-up slot is decoded and
+    /// cached (kit + pattern records through libanalogrytm).
+    pub(crate) fn ensure_raw_model(&mut self, slot: u32) {
+        if self.raw_models.contains_key(&slot) {
+            return;
+        }
+        let known: Vec<crate::model::SampleSlotInfo> = self
+            .model
+            .as_ref()
+            .map(|m| m.samples.clone())
+            .unwrap_or_default();
+        let model = cache::load_project_backup(&cache::default_dir(), slot).and_then(|bytes| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                projfile::to_project_model(&bytes, &known).ok()
+            }))
+            .unwrap_or(None)
+        });
+        self.raw_models.insert(slot, model);
+    }
+
+    /// True when the workspace is browsing a backed-up snapshot rather than
+    /// the live/cached active project.
+    pub(crate) fn is_browsing_snapshot(&self) -> bool {
+        !matches!(self.ui_state.project, ProjectSelection::Active)
+    }
+
+    /// Builds a kit clipboard from a backed-up project (no device I/O) and
+    /// stores it for pasting.
+    pub(crate) fn copy_kit_from_backup(&mut self, slot: u32, kit_index: usize) {
+        self.ensure_raw_snapshot(slot);
+        let Some(snapshot) = self
+            .raw_snapshots
+            .get(&slot)
+            .and_then(Option::as_ref)
+            .cloned()
+        else {
+            self.toast("This project's backup is not indexed — index it first.".to_owned());
+            return;
+        };
+        let Some(bytes) = cache::load_project_backup(&cache::default_dir(), slot) else {
+            self.toast("Backup file missing — re-index this project.".to_owned());
+            return;
+        };
+        let label = crate::model::names::project_display_name(&snapshot.name, slot)
+            .text()
+            .to_owned();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            transfer::capture_kit_from_backup(&bytes, &snapshot, &label, kit_index)
+        }))
+        .unwrap_or_else(|_| Err("internal error while converting the kit".into()));
+        match result {
+            Ok(clip) => {
+                let hint = clip.source_hint.clone();
+                let _ = transfer::save_kit(&clip);
+                self.kit_clipboard = Some(clip);
+                self.toast(format!(
+                    "Copied {hint} — paste it from the target project's Kits tab"
+                ));
+            }
+            Err(e) => self.toast(format!("Copy failed: {e}")),
+        }
     }
 
     /// Guesses which backed-up slot the active project is, by matching kit
@@ -324,6 +395,7 @@ impl RytmdashApp {
         if let Some((ok, failed)) = self.backup.take_finished() {
             self.manifest = cache::load_project_manifest(&cache::default_dir());
             self.raw_snapshots.clear();
+            self.raw_models.clear();
             self.identify_active_project();
             let (kind, title) = if failed == 0 {
                 (
@@ -401,6 +473,7 @@ impl RytmdashApp {
                 }
                 self.manifest = cache::load_project_manifest(&cache::default_dir());
                 self.raw_snapshots.remove(&slot);
+                self.raw_models.remove(&slot);
             }
             FileOpOutcome::Copied { dst, name, .. } => {
                 if let Some(model) = self.model.as_mut() {
@@ -413,13 +486,28 @@ impl RytmdashApp {
                 }
                 self.manifest = cache::load_project_manifest(&cache::default_dir());
                 self.raw_snapshots.remove(&dst);
+                self.raw_models.remove(&dst);
             }
             FileOpOutcome::SampleLoaded(info) => {
+                let slot = info.slot;
                 if let Some(model) = self.model.as_mut() {
-                    model.samples.retain(|s| s.slot != info.slot);
+                    model.samples.retain(|s| s.slot != slot);
                     model.samples.push(info);
                     model.samples.sort_by_key(|s| s.slot);
                     let _ = cache::save(model);
+                }
+                // A pad was waiting for this sample: hand over to the
+                // assign-confirm flow (object write, backup-first).
+                if let Some((kit_index, track)) = self.ui_state.pending_pad_assign.take() {
+                    self.ui_state.nav = Nav::Projects;
+                    self.ui_state.tab = ProjectTab::Kits;
+                    self.ui_state.project = ProjectSelection::Active;
+                    self.ui_state.kits.selected_kit = Some(kit_index);
+                    self.execute.pending = Some(crate::gui::execute::PendingAssign {
+                        kit_index,
+                        track,
+                        slot,
+                    });
                 }
             }
         }
