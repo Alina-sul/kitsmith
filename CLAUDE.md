@@ -5,12 +5,14 @@ Rytm over USB, reads its +Drive/project state, and displays it as a dashboard wh
 samples and other project entities (sounds, kits — later patterns) move between projects
 by **drag & drop**. It replaces the tedious device-menu + Elektron Transfer juggling.
 
-Language: **Rust**. Status: research done (`docs/`); milestones M0–M5 built as a
-stacked PR chain (#1→#4), **none hardware-verified yet**: `midi/` (inquiry, duplex
-link, SDS), `device/` (watcher, object sync, SDS upload), `model/` + `cache/`,
-`audio/` (WAV→48k/16bit mono), `ops/` (transaction plans, backup-first, read-back
-verify), `gui/` (dashboard, import queue, drag&drop + confirm modal). Milestones
-tracked in `docs/plan.md`.
+Language: **Rust**. Status: milestones M0–M5 built, **none hardware-verified yet**:
+`midi/` (inquiry, duplex link, SDS), `device/` (watcher, object sync, SDS upload,
+file-protocol reads), `model/` + `cache/`, `audio/` (WAV→48k/16bit mono), `ops/`
+(transaction plans, backup-first, read-back verify), `gui/` (desktop shell per
+PRD v2: app bar + sidebar navigation, project workspace with Kits/Samples/Patterns/
+Overview tabs, inspectors, import queue, activity log, plan modal). The product
+direction and remaining work packages (WP0–WP17) live in **`docs/PRD-v2.md`**;
+earlier milestones in `docs/plan.md`.
 
 ## Commands
 
@@ -30,6 +32,8 @@ tracked in `docs/plan.md`.
 - `docs/research/protocol-ecosystem.md` — the two sysex protocols (Elektron file
   protocol à la Transfer/elektroid; AR object protocol à la libanalogrytm/rytm-rs),
   prior art, licenses, risks.
+- `docs/PRD-v2.md` — the product/UX/architecture spec driving the redesign and
+  the WP0–WP17 work packages. **Read before UI or cross-project work.**
 - `docs/plan.md` — the software plan (architecture, crates, phases).
 - `reference/` (gitignored) — local copy of the AR MKII manual PDF (OS 1.72).
 

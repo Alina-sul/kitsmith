@@ -1,164 +1,154 @@
-//! The application shell: status bar, dashboard, import tray, execute modal.
+//! The application shell: top app bar, left navigation sidebar, workspace
+//! router, toasts and the plan-execution modal (PRD v2 Part II).
 
-use eframe::egui::{self, Color32, RichText};
+use std::time::Instant;
+
+use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Stroke};
 
 use crate::cache;
 use crate::device::detect::DeviceState;
 use crate::device::watcher::DeviceWatcher;
-use crate::gui::dashboard::{self, DashboardState};
 use crate::gui::execute::ExecutePanel;
 use crate::gui::import::ImportPanel;
-use crate::gui::sync::{SyncController, SyncStatus};
-use crate::gui::theme::OK_COLOR;
+use crate::gui::sync::SyncController;
+use crate::gui::views::activity::{ActivityEntry, ActivityKind};
+use crate::gui::{sidebar, theme, top_bar, views};
 use crate::model::ProjectModel;
 
+/// Top-level navigation destinations (PRD §5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Nav {
+    #[default]
+    Projects,
+    Drive,
+    Import,
+    Activity,
+    Diagnostics,
+}
+
+/// Tabs inside the project workspace (PRD §9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProjectTab {
+    #[default]
+    Kits,
+    Samples,
+    Patterns,
+    Overview,
+}
+
+/// What the sidebar project browser points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProjectSelection {
+    /// The synced active project (the only one with indexed contents today).
+    #[default]
+    Active,
+    /// A +Drive project slot; contents are not indexed yet (WP11).
+    Slot(u32),
+}
+
+/// Kit list filter (PRD §11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KitFilter {
+    #[default]
+    InUse,
+    All,
+    Unused,
+}
+
+/// UI state for the Kits workspace.
+#[derive(Default)]
+pub struct KitsState {
+    pub filter: KitFilter,
+    pub search: String,
+    pub selected_kit: Option<usize>,
+    /// Track selected in the pad grid — opens the inspector.
+    pub selected_track: Option<usize>,
+    /// Sample slot being traced — pads using it get a purple ring.
+    pub traced_slot: Option<u8>,
+}
+
+/// All per-frame-persistent UI state, separate from device/model state.
+#[derive(Default)]
+pub struct UiState {
+    pub nav: Nav,
+    pub project: ProjectSelection,
+    pub project_search: String,
+    pub tab: ProjectTab,
+    pub kits: KitsState,
+    pub selected_sample_slot: Option<u8>,
+    pub selected_pattern: Option<usize>,
+}
+
+/// When the last sync finished and how complete it was.
+#[derive(Clone, Copy)]
+pub struct SyncInfo {
+    pub at: Instant,
+    pub missed: usize,
+}
+
 pub struct RytmdashApp {
-    watcher: DeviceWatcher,
-    sync: SyncController,
-    import: ImportPanel,
-    execute: ExecutePanel,
-    dashboard: DashboardState,
-    model: Option<ProjectModel>,
-    last_sync_note: Option<String>,
+    pub(crate) watcher: DeviceWatcher,
+    pub(crate) sync: SyncController,
+    pub(crate) import: ImportPanel,
+    pub(crate) execute: ExecutePanel,
+    pub(crate) model: Option<ProjectModel>,
+    pub(crate) ui_state: UiState,
+    pub(crate) last_sync: Option<SyncInfo>,
+    pub(crate) activity: Vec<ActivityEntry>,
+    toasts: Vec<(String, Instant)>,
 }
 
 impl RytmdashApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        theme::apply(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         Self {
             watcher: DeviceWatcher::spawn(move || ctx.request_repaint()),
             sync: SyncController::default(),
             import: ImportPanel::default(),
             execute: ExecutePanel::default(),
-            dashboard: DashboardState::default(),
             model: cache::load(),
-            last_sync_note: None,
+            ui_state: UiState::default(),
+            last_sync: None,
+            activity: Vec::new(),
+            toasts: Vec::new(),
         }
     }
 
-    fn top_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let snapshot = self.watcher.snapshot();
-        ui.horizontal(|ui| {
-            ui.heading("rytmdash");
-            ui.separator();
-            match &snapshot.device {
-                DeviceState::Connected(info) => {
-                    ui.label(RichText::new("●").color(OK_COLOR));
-                    ui.label(&info.port_name).on_hover_text(info.describe());
-                    self.sync_controls(ui, ctx, &info.port_name);
-                }
-                DeviceState::Searching => {
-                    ui.spinner();
-                    ui.label("Searching for an Analog Rytm…").on_hover_text(
-                        "Connect the Rytm over USB. On the device: GLOBAL SETTINGS → SYSTEM → \
-                         USB CONFIG → USB-MIDI, and MIDI CONFIG → PORT CONFIG input/output → USB.",
-                    );
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button("⋯", |ui| {
-                    port_list(ui, "MIDI inputs", &snapshot.ports.inputs);
-                    port_list(ui, "MIDI outputs", &snapshot.ports.outputs);
-                });
-                if let Some(model) = &self.model {
-                    if !model.projects.is_empty() {
-                        ui.menu_button(format!("projects ({})", model.projects.len()), |ui| {
-                            ui.label(
-                                RichText::new(
-                                    "The dashboard mirrors the *active* project. To work on \
-                                     another one: load it on the device (GLOBAL SETTINGS → \
-                                     PROJECT), then press ⟳ Sync.",
-                                )
-                                .weak()
-                                .small(),
-                            );
-                            ui.separator();
-                            egui::ScrollArea::vertical()
-                                .max_height(300.0)
-                                .show(ui, |ui| {
-                                    for project in &model.projects {
-                                        ui.label(format!("{:>3} · {}", project.id, project.name));
-                                    }
-                                });
-                        });
-                    }
-                }
-                if let Some(note) = &self.last_sync_note {
-                    ui.label(RichText::new(note).weak().small());
-                }
-            });
+    pub(crate) fn log_activity(
+        &mut self,
+        kind: ActivityKind,
+        title: String,
+        detail: Option<String>,
+    ) {
+        self.activity.push(ActivityEntry {
+            kind,
+            title,
+            detail,
+            at: Instant::now(),
         });
     }
 
-    fn sync_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, in_port: &str) {
-        match self.sync.status() {
-            SyncStatus::Running(progress) => {
-                ui.add(
-                    egui::ProgressBar::new(progress.done as f32 / progress.total.max(1) as f32)
-                        .desired_width(160.0)
-                        .text(format!(
-                            "{} {}/{}",
-                            progress.stage, progress.done, progress.total
-                        )),
-                );
-                if ui.small_button("cancel").clicked() {
-                    self.sync.cancel();
-                }
-            }
-            status => {
-                if ui
-                    .button("⟳ Sync")
-                    .on_hover_text("pull the active project")
-                    .clicked()
-                {
-                    let repaint_ctx = ctx.clone();
-                    self.last_sync_note = None;
-                    self.sync
-                        .start(in_port.to_owned(), move || repaint_ctx.request_repaint());
-                }
-                if let SyncStatus::Failed(err) = status {
-                    ui.label(
-                        RichText::new(format!("sync failed: {err}")).color(Color32::LIGHT_RED),
-                    );
-                }
-            }
-        }
+    fn toast(&mut self, text: String) {
+        self.toasts.push((text, Instant::now()));
     }
 
-    fn empty_state(&self, ui: &mut egui::Ui, connected: bool) {
-        ui.add_space(48.0);
-        ui.vertical_centered(|ui| {
-            ui.label(RichText::new("No project data yet").heading().weak());
-            ui.add_space(8.0);
-            if connected {
-                ui.label("Press ⟳ Sync in the top bar to pull the active project.");
-            } else {
-                ui.label("1 · Connect the Analog Rytm over USB");
-                ui.label("2 · On the device: USB CONFIG → USB-MIDI, PORT CONFIG → USB");
-                ui.label("3 · Press ⟳ Sync in the top bar");
-            }
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(
-                    "You can also drop .wav files anywhere in this window \
-                     to convert them for upload.",
-                )
-                .weak(),
-            );
-        });
-    }
-}
-
-impl eframe::App for RytmdashApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-
+    /// Pulls finished background work into app state.
+    fn absorb_events(&mut self, ctx: &egui::Context) {
         if let Some((model, missed)) = self.sync.take_finished() {
-            self.last_sync_note = Some(if missed == 0 {
-                "sync complete".to_owned()
-            } else {
-                format!("sync complete — {missed} object(s) did not answer")
+            self.last_sync = Some(SyncInfo {
+                at: Instant::now(),
+                missed,
             });
+            let (kind, title) = if missed == 0 {
+                (ActivityKind::Success, "Sync complete".to_owned())
+            } else {
+                (
+                    ActivityKind::Warning,
+                    format!("Partial sync · {missed} items unavailable"),
+                )
+            };
+            self.log_activity(kind, title, None);
             self.model = Some(model);
         }
 
@@ -172,46 +162,148 @@ impl eframe::App for RytmdashApp {
                 .collect()
         });
         if !dropped.is_empty() {
+            let count = dropped.len();
             self.import.add_dropped_files(dropped);
+            self.toast(format!(
+                "{count} file{} added to Import",
+                if count == 1 { "" } else { "s" }
+            ));
+            self.log_activity(
+                ActivityKind::Info,
+                format!("{count} file(s) added to the import queue"),
+                None,
+            );
         }
 
-        let in_port = match &self.watcher.snapshot().device {
+        // Esc leaves the sample-trace state (PRD §16).
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.ui_state.kits.traced_slot = None;
+        }
+    }
+
+    fn show_toasts(&mut self, ctx: &egui::Context) {
+        const TOAST_SECONDS: f32 = 4.0;
+        self.toasts
+            .retain(|(_, at)| at.elapsed().as_secs_f32() < TOAST_SECONDS);
+        if self.toasts.is_empty() {
+            return;
+        }
+        egui::Area::new(egui::Id::new("toasts"))
+            .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
+            .show(ctx, |ui| {
+                for (text, _) in &self.toasts {
+                    Frame::new()
+                        .fill(theme::SURFACE_ELEVATED)
+                        .stroke(Stroke::new(1.0, theme::BORDER))
+                        .corner_radius(CornerRadius::same(6))
+                        .inner_margin(Margin::symmetric(12, 8))
+                        .show(ui, |ui| {
+                            ui.label(text);
+                        });
+                }
+            });
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+
+    fn workspace(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        match self.ui_state.nav {
+            Nav::Projects => views::project::show(self, ui),
+            Nav::Drive => views::drive::show(ui, self.model.as_ref()),
+            Nav::Import => {
+                let in_port = self.connected_in_port();
+                views::import_page::show(ui, &mut self.import, in_port.as_deref(), ctx);
+            }
+            Nav::Activity => views::activity::show(ui, &self.activity, &self.sync, &self.import),
+            Nav::Diagnostics => {
+                views::diagnostics::show(ui, &self.watcher, self.model.as_ref(), self.last_sync)
+            }
+        }
+    }
+
+    pub(crate) fn connected_in_port(&self) -> Option<String> {
+        match &self.watcher.snapshot().device {
             DeviceState::Connected(info) => Some(info.port_name.clone()),
             DeviceState::Searching => None,
-        };
-
-        egui::Panel::top("status-bar").show(ui, |ui| {
-            self.top_bar(ui, &ctx);
-        });
-
-        if !self.import.is_empty() {
-            egui::Panel::bottom("import-tray")
-                .resizable(false)
-                .show(ui, |ui| {
-                    self.import.show(ui, in_port.as_deref(), &ctx);
-                });
         }
-
-        egui::CentralPanel::default().show(ui, |ui| match &self.model {
-            Some(model) => {
-                if let Some(assign) = dashboard::show(ui, model, &mut self.dashboard) {
-                    self.execute.pending = Some(assign);
-                }
-            }
-            None => self.empty_state(ui, in_port.is_some()),
-        });
-
-        // Plan preview / execution modal, if a drag landed.
-        self.execute.show(&ctx, in_port.as_deref());
     }
 }
 
-fn port_list(ui: &mut egui::Ui, label: &str, names: &[String]) {
-    ui.label(RichText::new(label).strong());
-    if names.is_empty() {
-        ui.label(RichText::new("(none)").weak());
+impl eframe::App for RytmdashApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.absorb_events(&ctx);
+
+        egui::Panel::top("app-bar")
+            .exact_size(theme::APP_BAR_HEIGHT)
+            .frame(
+                Frame::new()
+                    .fill(theme::BG_SIDEBAR)
+                    .inner_margin(Margin::symmetric(12, 0)),
+            )
+            .show(ui, |ui| {
+                top_bar::show(self, ui, &ctx);
+            });
+
+        egui::Panel::left("sidebar")
+            .default_size(theme::SIDEBAR_WIDTH)
+            .resizable(true)
+            .min_size(200.0)
+            .max_size(320.0)
+            .frame(
+                Frame::new()
+                    .fill(theme::BG_SIDEBAR)
+                    .inner_margin(Margin::same(10)),
+            )
+            .show(ui, |ui| {
+                sidebar::show(self, ui);
+            });
+
+        egui::CentralPanel::default()
+            .frame(
+                Frame::new()
+                    .fill(theme::BG_APP)
+                    .inner_margin(Margin::same(16)),
+            )
+            .show(ui, |ui| {
+                self.workspace(ui, &ctx);
+            });
+
+        // Plan preview / execution modal, if a drag landed.
+        let in_port = self.connected_in_port();
+        if let Some(report) = self
+            .execute
+            .show(&ctx, in_port.as_deref(), self.model.as_ref())
+        {
+            let (kind, title) = if report.succeeded() {
+                (ActivityKind::Success, "Plan completed".to_owned())
+            } else {
+                (ActivityKind::Error, "Plan stopped".to_owned())
+            };
+            let detail = report.completed.join("\n");
+            self.log_activity(kind, title, Some(detail));
+        }
+
+        self.show_toasts(&ctx);
     }
-    for name in names {
-        ui.label(format!("  {name}"));
+}
+
+/// Formats how long ago an instant was, for status lines.
+pub fn ago(at: Instant) -> String {
+    let secs = at.elapsed().as_secs();
+    match secs {
+        0..=9 => "just now".to_owned(),
+        10..=59 => format!("{secs}s ago"),
+        60..=3599 => format!("{}m ago", secs / 60),
+        _ => format!("{}h ago", secs / 3600),
     }
+}
+
+/// Reusable page title.
+pub fn page_title(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .size(theme::FONT_PAGE_TITLE)
+            .color(theme::TEXT_PRIMARY)
+            .strong(),
+    );
 }

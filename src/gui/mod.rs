@@ -1,11 +1,15 @@
-//! The egui dashboard shell.
+//! The egui desktop shell (PRD v2 Part II): app bar, sidebar navigation,
+//! workspace views, inspectors and the plan modal.
 
 mod app;
-mod dashboard;
 mod execute;
 mod import;
+mod sidebar;
 mod sync;
 mod theme;
+mod top_bar;
+mod views;
+mod widgets;
 
 use app::RytmdashApp;
 
@@ -20,7 +24,8 @@ pub fn run() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([720.0, 480.0])
+            .with_inner_size([1280.0, 800.0])
+            .with_min_inner_size([1024.0, 640.0])
             .with_title("rytmdash"),
         ..Default::default()
     };

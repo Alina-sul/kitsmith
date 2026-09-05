@@ -6,6 +6,8 @@
 //! information the device itself never shows. Serializable, so it doubles as
 //! the on-disk cache format.
 
+pub mod names;
+
 use std::collections::BTreeMap;
 
 use rytm_rs::RytmProject;

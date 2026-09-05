@@ -1,12 +1,14 @@
-//! Sample import panel: WAVs dropped on the window are converted here and
-//! uploaded to the device over SDS.
+//! Import queue model: WAVs dropped on the window are converted here and
+//! uploaded to the device over SDS. Rendering lives in
+//! [`crate::gui::views::import_page`]; this module owns the queue state and
+//! the upload workers.
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui;
 
 use crate::audio::{convert_wav_file, ConvertedSample};
 use crate::device::detect::is_rytm_port;
@@ -18,6 +20,8 @@ use crate::midi::ports;
 pub struct ImportItem {
     pub sample: ConvertedSample,
     pub state: ImportState,
+    /// Included in "Upload selected" batch actions.
+    pub selected: bool,
 }
 
 #[derive(Clone)]
@@ -28,7 +32,7 @@ pub enum ImportState {
     Failed(String),
 }
 
-/// The import queue + at most one running upload worker.
+/// The import queue + upload workers.
 #[derive(Default)]
 pub struct ImportPanel {
     items: Vec<Arc<Mutex<ImportItem>>>,
@@ -42,10 +46,11 @@ impl ImportPanel {
     /// Converts newly dropped files and queues them.
     pub fn add_dropped_files(&mut self, paths: Vec<PathBuf>) {
         for path in paths {
-            let state = match convert_wav_file(&path) {
+            let item = match convert_wav_file(&path) {
                 Ok(sample) => ImportItem {
                     sample,
                     state: ImportState::Converted,
+                    selected: true,
                 },
                 Err(e) => ImportItem {
                     sample: ConvertedSample {
@@ -57,86 +62,62 @@ impl ImportPanel {
                         source_channels: 0,
                     },
                     state: ImportState::Failed(e.to_string()),
+                    selected: false,
                 },
             };
-            self.items.push(Arc::new(Mutex::new(state)));
+            self.items.push(Arc::new(Mutex::new(item)));
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 
-    /// Renders the queue; `device_in_port` enables the upload buttons.
-    pub fn show(&mut self, ui: &mut egui::Ui, device_in_port: Option<&str>, ctx: &egui::Context) {
-        ui.label(RichText::new("Imported samples").strong());
-        ui.label(
-            RichText::new(
-                "Files convert to 16-bit / 48 kHz mono. Uploads land in the +Drive \
-                 directory marked UPLOAD HERE (INCOMING/ by default).",
-            )
-            .weak(),
-        );
-        ui.add_space(4.0);
+    pub fn items(&self) -> &[Arc<Mutex<ImportItem>>] {
+        &self.items
+    }
 
-        let mut to_remove = None;
-        for (i, item_arc) in self.items.iter().enumerate() {
-            let item = item_arc.lock().expect("import item lock poisoned");
-            ui.horizontal(|ui| {
-                ui.label(&item.sample.name);
-                match &item.state {
-                    ImportState::Converted => {
-                        ui.label(
-                            RichText::new(format!(
-                                "{:.2}s · {} KB · from {} Hz/{}ch",
-                                item.sample.seconds(),
-                                item.sample.byte_size() / 1024,
-                                item.sample.source_rate,
-                                item.sample.source_channels,
-                            ))
-                            .weak(),
-                        );
-                        if let Some(port) = device_in_port {
-                            if ui.small_button("⇪ upload").clicked() {
-                                self.start_upload(Arc::clone(item_arc), port.to_owned(), ctx);
-                            }
-                        }
-                    }
-                    ImportState::Uploading(p) => {
-                        ui.add(
-                            egui::ProgressBar::new(
-                                p.packets_sent as f32 / p.packets_total.max(1) as f32,
-                            )
-                            .desired_width(120.0)
-                            .text(format!("{}/{}", p.packets_sent, p.packets_total)),
-                        );
-                    }
-                    ImportState::Sent { open_loop } => {
-                        ui.label(
-                            RichText::new(if *open_loop {
-                                "sent (open loop)"
-                            } else {
-                                "sent ✓"
-                            })
-                            .color(Color32::from_rgb(0x2E, 0xCC, 0x71)),
-                        );
-                    }
-                    ImportState::Failed(err) => {
-                        ui.label(RichText::new(err.as_str()).color(Color32::LIGHT_RED));
-                    }
-                }
-                if ui.small_button("✕").clicked() {
-                    to_remove = Some(i);
-                }
-            });
-        }
-        if let Some(i) = to_remove {
-            self.items.remove(i);
+    pub fn remove(&mut self, index: usize) {
+        if index < self.items.len() {
+            self.items.remove(index);
         }
     }
 
-    fn start_upload(&self, item: Arc<Mutex<ImportItem>>, in_port: String, ctx: &egui::Context) {
+    pub fn set_all_selected(&mut self, selected: bool) {
+        for item in &self.items {
+            item.lock().expect("import item lock poisoned").selected = selected;
+        }
+    }
+
+    /// Starts uploads for every selected, converted item (one worker each).
+    pub fn upload_selected(&mut self, in_port: &str, ctx: &egui::Context) {
+        let queued: Vec<Arc<Mutex<ImportItem>>> = self
+            .items
+            .iter()
+            .filter(|item| {
+                let guard = item.lock().expect("import item lock poisoned");
+                guard.selected && matches!(guard.state, ImportState::Converted)
+            })
+            .cloned()
+            .collect();
+        for item in queued {
+            self.start_upload(item, in_port.to_owned(), ctx);
+        }
+    }
+
+    /// Starts one upload worker for `item`.
+    pub fn start_upload(
+        &mut self,
+        item: Arc<Mutex<ImportItem>>,
+        in_port: String,
+        ctx: &egui::Context,
+    ) {
         let sample_number = self.next_sample_number;
+        self.next_sample_number = self.next_sample_number.wrapping_add(1);
         let cancel = Arc::clone(&self.cancel);
         let repaint = ctx.clone();
         thread::Builder::new()

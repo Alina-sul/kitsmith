@@ -1,15 +1,18 @@
 //! Plan preview + execution flow: the modal that stands between a drag
-//! gesture and the device.
+//! gesture and the device. Titles name the user's intent, protocol steps live
+//! in a collapsible section (PRD §37), and completion reports what ran.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use crate::device::detect::is_rytm_port;
+use crate::gui::theme;
 use crate::midi::link::MidiLink;
 use crate::midi::ports;
-use crate::model::SAMPLE_SLOT_COUNT;
+use crate::model::names::{self, ResolvedName};
+use crate::model::{ProjectModel, SAMPLE_SLOT_COUNT};
 use crate::ops::{execute, ExecutionReport, LiveBackend, Plan};
 
 /// A drag that landed and awaits confirmation.
@@ -42,11 +45,17 @@ pub struct ExecutePanel {
 
 impl ExecutePanel {
     /// Renders the preview modal + execution state. Call every frame.
-    pub fn show(&mut self, ctx: &egui::Context, device_in_port: Option<&str>) {
+    /// Returns the report once, when a finished execution is dismissed.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        device_in_port: Option<&str>,
+        model: Option<&ProjectModel>,
+    ) -> Option<ExecutionReport> {
         let state = self.state.lock().expect("exec state lock poisoned").clone();
         match state {
             ExecState::Running { step } => {
-                egui::Window::new("Executing")
+                egui::Window::new("Working…")
                     .collapsible(false)
                     .resizable(false)
                     .show(ctx, |ui| {
@@ -55,7 +64,7 @@ impl ExecutePanel {
                             ui.label(step);
                         });
                     });
-                return;
+                return None;
             }
             ExecState::Done(report) => {
                 // The session backup counts only once it actually completed.
@@ -75,61 +84,65 @@ impl ExecutePanel {
                         ui.label(format!("✓ {line}"));
                     }
                     if let Some((step, err)) = &report.failed {
-                        ui.label(
-                            RichText::new(format!("✗ {step}: {err}")).color(Color32::LIGHT_RED),
-                        );
+                        ui.label(RichText::new(format!("✗ {step}: {err}")).color(theme::DANGER));
                         ui.label(
                             RichText::new(
                                 "Nothing after the failed step ran. The session backup \
                                  (if listed above) is on disk.",
                             )
-                            .weak(),
+                            .color(theme::TEXT_SECONDARY),
                         );
                     }
-                    if ui.button("close").clicked() {
+                    if ui.button("Close").clicked() {
                         close = true;
                     }
                 });
                 if close {
                     *self.state.lock().expect("exec state lock poisoned") = ExecState::Idle;
+                    return Some(report);
                 }
-                return;
+                return None;
             }
             ExecState::Failed(err) => {
                 let mut close = false;
                 egui::Window::new("Execution failed")
                     .collapsible(false)
                     .show(ctx, |ui| {
-                        ui.label(RichText::new(&err).color(Color32::LIGHT_RED));
-                        if ui.button("close").clicked() {
+                        ui.label(RichText::new(&err).color(theme::DANGER));
+                        if ui.button("Close").clicked() {
                             close = true;
                         }
                     });
                 if close {
                     *self.state.lock().expect("exec state lock poisoned") = ExecState::Idle;
                 }
-                return;
+                return None;
             }
             ExecState::Idle => {}
         }
 
         let Some(pending) = &mut self.pending else {
-            return;
+            return None;
         };
         let mut close = false;
         let mut launch: Option<Plan> = None;
-        egui::Window::new("Confirm change")
+        let track = names::track_label(pending.track);
+        let sample = sample_label(model, pending.slot);
+        egui::Window::new(format!("Assign {sample} to {track}?"))
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.label(format!(
-                    "Assign a sample slot to kit {} · track {}",
+                    "Kit {:02} · point the {track} track Sound at project sample slot:",
                     pending.kit_index + 1,
-                    pending.track + 1
                 ));
                 ui.horizontal(|ui| {
-                    ui.label("sample slot:");
                     ui.add(egui::DragValue::new(&mut pending.slot).range(1..=SAMPLE_SLOT_COUNT));
+                    ui.label(
+                        RichText::new("advanced override — the drop already chose this slot")
+                            .color(theme::TEXT_MUTED)
+                            .size(theme::FONT_META),
+                    );
                 });
                 match Plan::assign_sample_slot(
                     pending.kit_index,
@@ -139,27 +152,42 @@ impl ExecutePanel {
                 ) {
                     Ok(plan) => {
                         ui.add_space(4.0);
-                        ui.label(RichText::new("This will:").weak());
-                        for step in &plan.steps {
-                            ui.label(format!("  • {}", step.describe()));
+                        if !self.backup_taken {
+                            ui.label(
+                                RichText::new("A backup will be created before writing.")
+                                    .color(theme::TEXT_SECONDARY),
+                            );
                         }
+                        ui.label(
+                            RichText::new("The write is verified by reading the kit back.")
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                        ui.collapsing("Technical steps", |ui| {
+                            for step in &plan.steps {
+                                ui.label(
+                                    RichText::new(format!("• {}", step.describe()))
+                                        .color(theme::TEXT_SECONDARY)
+                                        .size(theme::FONT_META),
+                                );
+                            }
+                        });
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             let connected = device_in_port.is_some();
                             if ui
-                                .add_enabled(connected, egui::Button::new("▶ Execute on device"))
-                                .on_disabled_hover_text("connect the Rytm first")
+                                .add_enabled(connected, egui::Button::new("Assign sample"))
+                                .on_disabled_hover_text("Connect the Rytm first")
                                 .clicked()
                             {
                                 launch = Some(plan);
                             }
-                            if ui.button("cancel").clicked() {
+                            if ui.button("Cancel").clicked() {
                                 close = true;
                             }
                         });
                     }
                     Err(e) => {
-                        ui.label(RichText::new(e.to_string()).color(Color32::LIGHT_RED));
+                        ui.label(RichText::new(e.to_string()).color(theme::DANGER));
                     }
                 }
             });
@@ -170,6 +198,7 @@ impl ExecutePanel {
         } else if close {
             self.pending = None;
         }
+        None
     }
 
     fn spawn(&self, plan: Plan, in_port: String, repaint: egui::Context) {
@@ -185,6 +214,14 @@ impl ExecutePanel {
                 repaint.request_repaint();
             })
             .expect("failed to spawn execution thread");
+    }
+}
+
+/// `Crash.wav`, or `sample slot 03` when the name is not resolved.
+fn sample_label(model: Option<&ProjectModel>, slot: u8) -> String {
+    match names::sample_display_name(model.and_then(|m| m.sample_name(slot))) {
+        ResolvedName::Native(name) => name,
+        _ => format!("sample slot {slot:02}"),
     }
 }
 
