@@ -1,0 +1,18 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Local reference material (manuals, downloaded PDFs — see docs/research for links)
+/reference/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
