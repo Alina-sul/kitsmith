@@ -6,4 +6,5 @@
 
 pub mod detect;
 pub mod objects;
+pub mod samples;
 pub mod watcher;

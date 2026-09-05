@@ -2,6 +2,7 @@
 
 mod app;
 mod dashboard;
+mod import;
 mod sync;
 
 use app::RytmdashApp;

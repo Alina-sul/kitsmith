@@ -23,3 +23,12 @@ pub const OBJECT_REPLY_TIMEOUT: Duration = Duration::from_millis(2000);
 
 /// Consecutive unanswered object queries before a sync gives up.
 pub const SYNC_MISS_LIMIT: usize = 8;
+
+/// How long to wait for an SDS handshake (ACK/NAK/WAIT) per packet.
+pub const SDS_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Inter-packet rest when the receiver never handshakes (open-loop mode).
+pub const SDS_OPEN_LOOP_REST: Duration = Duration::from_millis(20);
+
+/// NAK-driven resends of one packet before giving up.
+pub const SDS_RETRY_LIMIT: usize = 8;

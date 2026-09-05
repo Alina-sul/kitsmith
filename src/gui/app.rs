@@ -6,12 +6,14 @@ use crate::cache;
 use crate::device::detect::DeviceState;
 use crate::device::watcher::DeviceWatcher;
 use crate::gui::dashboard;
+use crate::gui::import::ImportPanel;
 use crate::gui::sync::{SyncController, SyncStatus};
 use crate::model::ProjectModel;
 
 pub struct RytmdashApp {
     watcher: DeviceWatcher,
     sync: SyncController,
+    import: ImportPanel,
     model: Option<ProjectModel>,
     last_sync_note: Option<String>,
 }
@@ -22,6 +24,7 @@ impl RytmdashApp {
         Self {
             watcher: DeviceWatcher::spawn(move || ctx.request_repaint()),
             sync: SyncController::default(),
+            import: ImportPanel::default(),
             model: cache::load(),
             last_sync_note: None,
         }
@@ -98,10 +101,32 @@ impl eframe::App for RytmdashApp {
             self.top_bar(ui, &ctx);
         });
 
+        // Files dropped anywhere on the window enter the import queue.
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            self.import.add_dropped_files(dropped);
+        }
+
         egui::CentralPanel::default().show(ui, |ui| {
             if let Some(note) = &self.last_sync_note {
                 ui.label(RichText::new(note).weak());
                 ui.add_space(4.0);
+            }
+            if !self.import.is_empty() {
+                let in_port = match &self.watcher.snapshot().device {
+                    DeviceState::Connected(info) => Some(info.port_name.clone()),
+                    DeviceState::Searching => None,
+                };
+                self.import.show(ui, in_port.as_deref(), &ctx);
+                ui.add_space(8.0);
+                ui.separator();
             }
             match &self.model {
                 Some(model) => dashboard::show(ui, model),
