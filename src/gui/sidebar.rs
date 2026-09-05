@@ -74,15 +74,26 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             return;
         };
         let query = app.ui_state.project_search.to_lowercase();
-        let rows: Vec<(u32, String)> = model
+        // Row = (slot, native name, attached local alias if any). Search
+        // matches native name, alias and slot number.
+        let rows: Vec<(u32, String, Option<String>)> = model
             .projects
             .iter()
-            .filter(|p| {
-                query.is_empty()
-                    || p.name.to_lowercase().contains(&query)
-                    || format!("{:03}", p.id).contains(&query)
+            .map(|p| {
+                let alias = app
+                    .local_meta
+                    .project_alias(p.id, &p.name)
+                    .map(str::to_owned);
+                (p.id, p.name.clone(), alias)
             })
-            .map(|p| (p.id, p.name.clone()))
+            .filter(|(id, name, alias)| {
+                query.is_empty()
+                    || name.to_lowercase().contains(&query)
+                    || alias
+                        .as_ref()
+                        .is_some_and(|a| a.to_lowercase().contains(&query))
+                    || format!("{id:03}").contains(&query)
+            })
             .collect();
         if model.projects.is_empty() {
             ui.label(
@@ -91,7 +102,7 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             );
         }
         let mut select = None;
-        for (id, name) in &rows {
+        for (id, name, alias) in &rows {
             let selected = app.ui_state.project == ProjectSelection::Slot(*id);
             let clicked = widgets::list_row(ui, selected, theme::LIST_ROW_HEIGHT, |ui| {
                 ui.horizontal(|ui| {
@@ -100,14 +111,24 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                             .color(theme::TEXT_MUTED)
                             .monospace(),
                     );
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(names::project_display_name(name, *id).text())
-                                .color(theme::TEXT_PRIMARY)
-                                .strong(),
-                        )
-                        .truncate(),
-                    );
+                    // A local alias renders in italics and reveals the native
+                    // name on hover, so it never passes for a device name.
+                    let text = match alias {
+                        Some(alias) => RichText::new(alias)
+                            .color(theme::TEXT_PRIMARY)
+                            .strong()
+                            .italics(),
+                        None => RichText::new(names::project_display_name(name, *id).text())
+                            .color(theme::TEXT_PRIMARY)
+                            .strong(),
+                    };
+                    let label = ui.add(egui::Label::new(text).truncate());
+                    if let Some(_alias) = alias {
+                        label.on_hover_text(format!(
+                            "Local label · native name: {}",
+                            names::project_display_name(name, *id).text()
+                        ));
+                    }
                 });
             });
             if clicked {

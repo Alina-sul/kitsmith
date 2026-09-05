@@ -13,6 +13,7 @@ use crate::gui::import::ImportPanel;
 use crate::gui::sync::SyncController;
 use crate::gui::views::activity::{ActivityEntry, ActivityKind};
 use crate::gui::{sidebar, theme, top_bar, views};
+use crate::localmeta::{self, LocalMeta};
 use crate::model::ProjectModel;
 
 /// Top-level navigation destinations (PRD §5).
@@ -81,6 +82,9 @@ pub struct UiState {
     pub selected_pattern: Option<usize>,
     /// Collapses the whole left sidebar (toggled from the top bar).
     pub sidebar_hidden: bool,
+    /// In-progress local-label edit text and which slot it belongs to.
+    pub alias_draft: String,
+    pub alias_draft_slot: Option<u32>,
 }
 
 /// When the last sync finished and how complete it was.
@@ -96,6 +100,7 @@ pub struct RytmdashApp {
     pub(crate) import: ImportPanel,
     pub(crate) execute: ExecutePanel,
     pub(crate) model: Option<ProjectModel>,
+    pub(crate) local_meta: LocalMeta,
     pub(crate) ui_state: UiState,
     pub(crate) last_sync: Option<SyncInfo>,
     pub(crate) activity: Vec<ActivityEntry>,
@@ -112,6 +117,7 @@ impl RytmdashApp {
             import: ImportPanel::default(),
             execute: ExecutePanel::default(),
             model: cache::load(),
+            local_meta: localmeta::load(),
             ui_state: UiState::default(),
             last_sync: None,
             activity: Vec::new(),
@@ -133,8 +139,15 @@ impl RytmdashApp {
         });
     }
 
-    fn toast(&mut self, text: String) {
+    pub(crate) fn toast(&mut self, text: String) {
         self.toasts.push((text, Instant::now()));
+    }
+
+    /// Persists the local metadata store, reporting failure as a toast.
+    pub(crate) fn save_local_meta(&mut self) {
+        if let Err(e) = localmeta::save(&self.local_meta) {
+            self.toast(format!("Could not save local labels: {e}"));
+        }
     }
 
     /// Pulls finished background work into app state.

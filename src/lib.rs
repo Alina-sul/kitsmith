@@ -8,6 +8,7 @@ pub mod audio;
 pub mod cache;
 pub mod config;
 pub mod device;
+pub mod localmeta;
 pub mod midi;
 pub mod model;
 pub mod ops;

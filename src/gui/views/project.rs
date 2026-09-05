@@ -16,24 +16,50 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 }
 
 /// A +Drive project slot whose contents are not indexed yet (WP11). The UI is
-/// honest about that instead of faking contents (PRD §27).
+/// honest about that instead of faking contents (PRD §27), and hosts the
+/// local-label editor — the rename Rytmdash can offer today.
 fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
-    let name = app
+    let native_name = app
         .model
         .as_ref()
         .and_then(|m| m.projects.iter().find(|p| p.id == id))
-        .map(|p| names::project_display_name(&p.name, p.id).text().to_owned())
-        .unwrap_or_else(|| format!("Project {id:03}"));
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    let native_display = names::project_display_name(&native_name, id)
+        .text()
+        .to_owned();
+    let alias = app
+        .local_meta
+        .project_alias(id, &native_name)
+        .map(str::to_owned);
 
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(format!("Project {id:03}"))
-                .color(theme::TEXT_MUTED)
-                .size(theme::FONT_META),
-        );
-    });
-    page_title(ui, &name);
+    ui.label(
+        RichText::new(format!("Project {id:03}"))
+            .color(theme::TEXT_MUTED)
+            .size(theme::FONT_META),
+    );
+    match &alias {
+        Some(alias) => {
+            ui.label(
+                RichText::new(alias)
+                    .size(theme::FONT_PAGE_TITLE)
+                    .color(theme::TEXT_PRIMARY)
+                    .strong()
+                    .italics(),
+            )
+            .on_hover_text("Local label — the device still shows the native name.");
+            ui.label(
+                RichText::new(format!("Native name: {native_display}"))
+                    .color(theme::TEXT_SECONDARY)
+                    .size(theme::FONT_META),
+            );
+        }
+        None => page_title(ui, &native_display),
+    }
     ui.add_space(theme::GAP_L);
+
+    alias_editor(app, ui, id, &native_name, alias.as_deref());
+
     widgets::inspector_group(ui, "NOT INDEXED", |ui| {
         ui.label(
             "Rytmdash can list this +Drive project slot but has not indexed its contents yet.",
@@ -47,6 +73,64 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
             )
             .color(theme::TEXT_SECONDARY),
         );
+    });
+}
+
+/// The local-label editor (PRD §32): a rename that lives in Rytmdash only.
+/// No spec'd protocol operation renames a +Drive project natively, and the
+/// UI says so instead of pretending to write the device.
+fn alias_editor(
+    app: &mut RytmdashApp,
+    ui: &mut egui::Ui,
+    id: u32,
+    native_name: &str,
+    current_alias: Option<&str>,
+) {
+    // (Re)seed the draft when the editor targets a different slot.
+    if app.ui_state.alias_draft_slot != Some(id) {
+        app.ui_state.alias_draft = current_alias.unwrap_or_default().to_owned();
+        app.ui_state.alias_draft_slot = Some(id);
+    }
+
+    widgets::inspector_group(ui, "RYTMDASH LABEL (LOCAL ONLY)", |ui| {
+        ui.label(
+            RichText::new(
+                "Shown instead of the native name inside Rytmdash. Nothing is written to the \
+                 device — no verified protocol operation renames a project natively yet.",
+            )
+            .color(theme::TEXT_SECONDARY)
+            .size(theme::FONT_META),
+        );
+        ui.add_space(4.0);
+        let submitted = ui
+            .add(
+                egui::TextEdit::singleline(&mut app.ui_state.alias_draft)
+                    .hint_text("e.g. Live set A")
+                    .desired_width(280.0),
+            )
+            .lost_focus()
+            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let draft = app.ui_state.alias_draft.trim().to_owned();
+            let unchanged = current_alias.unwrap_or_default() == draft;
+            if (ui
+                .add_enabled(!unchanged, egui::Button::new("Save label"))
+                .clicked()
+                || (submitted && !unchanged))
+                && !draft.is_empty()
+            {
+                app.local_meta.set_project_alias(id, &draft, native_name);
+                app.save_local_meta();
+                app.toast(format!("Local label saved for project {id:03}"));
+            }
+            if current_alias.is_some() && ui.button("Remove label").clicked() {
+                app.local_meta.clear_project_alias(id);
+                app.save_local_meta();
+                app.ui_state.alias_draft.clear();
+                app.toast(format!("Local label removed from project {id:03}"));
+            }
+        });
     });
 }
 

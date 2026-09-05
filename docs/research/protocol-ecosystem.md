@@ -57,6 +57,16 @@ metadata and kit/sound structure cannot be edited over protocol 1 alone.
 - **Write safety.** Everything is undocumented; a bad write can corrupt a
   project slot. Design rule: *read freely, write transactionally, always after
   a backup pull.*
+- **No native project rename exists in the spec** (checked 2026-09-05 against
+  elektroid's connector). The data filesystem has `DATA_LIST 0x53`,
+  read `0x54–0x56`, write `0x57–0x59`, `DATA_MOVE 0x5a`, `DATA_COPY 0x5b`,
+  `DATA_CLEAR 0x5c`, `DATA_SWAP 0x5d` — move/copy/swap address *slots*
+  (`/projects/<id>` → `/projects/<id>`), never names. The project name is
+  metadata inside the `.arprj` payload, and rytm-rs's settings object carries
+  no name field either. Renaming natively would mean download → patch
+  unmapped bytes → re-upload of a whole project: out of bounds until the
+  `.arprj` format is mapped and hardware-verified (WP11+). Until then,
+  Rytmdash offers *local labels* only (`localmeta`), per PRD §32.
 
 ## Sources
 
