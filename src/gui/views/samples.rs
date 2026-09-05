@@ -7,13 +7,28 @@ use eframe::egui::{self, Frame, Id, Margin, RichText, ScrollArea};
 use crate::gui::app::{ProjectTab, RytmdashApp};
 use crate::gui::{theme, widgets};
 use crate::model::names::{self, ResolvedName};
-use crate::model::{ProjectModel, SlotUse, SAMPLE_SLOT_COUNT};
+use crate::model::{pattern_display_name, ProjectModel, SAMPLE_SLOT_COUNT};
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     let Some(model) = app.model.as_ref() else {
         return;
     };
     let usage = model.slot_usage();
+    // Full reference counts per slot: kit tracks + pool sounds + plocks.
+    let mut ref_counts: std::collections::BTreeMap<u8, usize> = usage
+        .iter()
+        .map(|(slot, uses)| (*slot, uses.len()))
+        .collect();
+    for sound in &model.pool_sounds {
+        if let Some(slot) = sound.sample_slot {
+            *ref_counts.entry(slot).or_default() += 1;
+        }
+    }
+    for pattern in &model.patterns {
+        for slot in &pattern.plocked_sample_slots {
+            *ref_counts.entry(*slot).or_default() += 1;
+        }
+    }
     let selected = &mut app.ui_state.selected_sample_slot;
     let mut jump: Option<(usize, u8)> = None;
 
@@ -42,18 +57,19 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             let loaded = model.samples.len();
             ui.label(
                 RichText::new(format!(
-                    "{loaded} of {SAMPLE_SLOT_COUNT} project sample slots loaded · {} referenced by kits",
-                    usage.len()
+                    "{loaded} of {SAMPLE_SLOT_COUNT} project sample slots loaded · {} referenced",
+                    ref_counts.len()
                 ))
                 .color(theme::TEXT_SECONDARY),
             );
             ui.add_space(theme::GAP_S);
-            cleanup_notice(ui);
+            cleanup_notice(ui, model);
             ui.add_space(theme::GAP_S);
 
             ScrollArea::vertical().show(ui, |ui| {
                 for slot in 1..=SAMPLE_SLOT_COUNT {
-                    slot_row(ui, model, slot, usage.get(&slot).map_or(0, Vec::len), selected);
+                    let uses = ref_counts.get(&slot).copied().unwrap_or(0);
+                    slot_row(ui, model, slot, uses, selected);
                 }
             });
         });
@@ -66,21 +82,29 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     }
 }
 
-/// Safe-vs-incomplete cleanup wording (PRD §22): no destructive `unused`
-/// action while Sound Lock dependencies are not indexed.
-fn cleanup_notice(ui: &mut egui::Ui) {
+/// Safe-vs-incomplete cleanup wording (PRD §22). The unload *operation* is
+/// still unimplemented (write path pending hardware verification), and with
+/// an old cache the dependency data is additionally incomplete.
+fn cleanup_notice(ui: &mut egui::Ui, model: &ProjectModel) {
     ui.horizontal(|ui| {
+        let hint = if model.dependency_scan {
+            "Dependency data is complete (kit tracks, Sound Pool, Sound Locks, sample plocks), \
+             but the unload write operation is not hardware-verified yet."
+        } else {
+            "This cache predates the dependency scan — re-sync to index Sound Lock and plock \
+             dependencies."
+        };
         ui.add_enabled(false, egui::Button::new("Unload unused…"))
-            .on_disabled_hover_text(
-                "Cleanup safety incomplete — Sound Lock dependencies are not indexed yet, so \
-                 “no kit-track uses” does not prove a sample is safe to unload.",
-            );
+            .on_disabled_hover_text(hint);
+        let note = if model.dependency_scan {
+            "Full dependency graph indexed · unload arrives with verified write support."
+        } else {
+            "Dependency data incomplete — re-sync to scan Sound Locks and plocks."
+        };
         ui.label(
-            RichText::new(
-                "Cleanup safety incomplete — Sound Lock dependencies are not indexed yet.",
-            )
-            .color(theme::TEXT_MUTED)
-            .size(theme::FONT_META),
+            RichText::new(note)
+                .color(theme::TEXT_MUTED)
+                .size(theme::FONT_META),
         );
     });
 }
@@ -206,13 +230,12 @@ fn slot_inspector(
         }
     });
 
-    let usage = model.slot_usage();
-    let uses: &[SlotUse] = usage.get(&slot).map_or(&[], Vec::as_slice);
+    let refs = model.slot_references(slot);
     widgets::inspector_group(ui, "USED BY", |ui| {
-        if uses.is_empty() {
-            ui.label(RichText::new("No kit-track uses").color(theme::TEXT_MUTED));
+        if refs.is_empty() {
+            ui.label(RichText::new("No known references").color(theme::TEXT_MUTED));
         }
-        for u in uses {
+        for u in &refs.kit_uses {
             let label = format!(
                 "Kit {:02} {} · {}",
                 u.kit_index + 1,
@@ -223,12 +246,51 @@ fn slot_inspector(
                 jump = Some((u.kit_index, slot));
             }
         }
+        for p in &refs.pool_uses {
+            let patterns = if p.patterns.is_empty() {
+                "no pattern Sound Locks".to_owned()
+            } else {
+                format!(
+                    "Sound-locked in {}",
+                    p.patterns
+                        .iter()
+                        .map(|i| pattern_display_name(*i))
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                )
+            };
+            ui.label(format!(
+                "Pool sound {:03} {} · {patterns}",
+                p.pool_index + 1,
+                p.sound_name.trim(),
+            ));
+        }
+        for index in &refs.plock_patterns {
+            ui.label(format!(
+                "Pattern {} · trig sample plock",
+                pattern_display_name(*index)
+            ));
+        }
         ui.add_space(4.0);
-        ui.label(
-            RichText::new("Sound Lock uses are not indexed yet — this list may be incomplete.")
-                .color(theme::TEXT_MUTED)
-                .size(theme::FONT_META),
-        );
+        match model.safe_to_unload(slot) {
+            Some(true) => {
+                ui.label(
+                    RichText::new("Safe to unload — no references in the full dependency graph.")
+                        .color(theme::SUCCESS)
+                        .size(theme::FONT_META),
+                );
+            }
+            Some(false) => {}
+            None => {
+                ui.label(
+                    RichText::new(
+                        "Dependency data incomplete (old cache) — re-sync to index Sound Locks.",
+                    )
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+                );
+            }
+        }
     });
     jump
 }

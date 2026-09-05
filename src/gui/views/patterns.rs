@@ -180,14 +180,43 @@ fn pattern_inspector(
     });
 
     widgets::inspector_group(ui, "DEPENDENCIES", |ui| {
-        ui.label(
-            RichText::new(
-                "Trig and Sound Lock details are not indexed yet — dependency data for this \
-                 pattern is incomplete.",
-            )
-            .color(theme::TEXT_MUTED)
-            .size(theme::FONT_META),
-        );
+        let Some(pattern) = model.patterns.iter().find(|p| p.index == index) else {
+            ui.label(RichText::new("Pattern data unavailable").color(theme::TEXT_MUTED));
+            return;
+        };
+        if !model.dependency_scan {
+            ui.label(
+                RichText::new("Old cache — re-sync to index Sound Locks and sample plocks.")
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+            );
+            return;
+        }
+        if pattern.sound_locks.is_empty() && pattern.plocked_sample_slots.is_empty() {
+            ui.label(RichText::new("No Sound Locks or sample plocks.").color(theme::TEXT_MUTED));
+        }
+        for pool_index in &pattern.sound_locks {
+            let name = model
+                .pool_sounds
+                .get(usize::from(*pool_index))
+                .map(|s| s.name.trim())
+                .filter(|n| !n.is_empty())
+                .map_or_else(
+                    || format!("Pool Sound {:03}", pool_index + 1),
+                    str::to_owned,
+                );
+            ui.label(format!(
+                "Sound-locks pool sound {:03} {name}",
+                pool_index + 1
+            ));
+        }
+        for slot in &pattern.plocked_sample_slots {
+            let name = match crate::model::names::sample_display_name(model.sample_name(*slot)) {
+                crate::model::names::ResolvedName::Native(name) => name,
+                _ => "name unavailable".to_owned(),
+            };
+            ui.label(format!("Sample plock on slot {slot:02} · {name}"));
+        }
     });
     jump
 }

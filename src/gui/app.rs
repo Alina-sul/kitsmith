@@ -5,9 +5,10 @@ use std::time::Instant;
 
 use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Stroke};
 
-use crate::cache;
+use crate::cache::{self, ProjectManifest};
 use crate::device::detect::DeviceState;
 use crate::device::watcher::DeviceWatcher;
+use crate::gui::backup::BackupController;
 use crate::gui::execute::ExecutePanel;
 use crate::gui::import::ImportPanel;
 use crate::gui::sync::SyncController;
@@ -34,6 +35,7 @@ pub enum ProjectTab {
     Kits,
     Samples,
     Patterns,
+    SoundPool,
     Overview,
 }
 
@@ -101,6 +103,8 @@ pub struct RytmdashApp {
     pub(crate) execute: ExecutePanel,
     pub(crate) model: Option<ProjectModel>,
     pub(crate) local_meta: LocalMeta,
+    pub(crate) backup: BackupController,
+    pub(crate) manifest: ProjectManifest,
     pub(crate) ui_state: UiState,
     pub(crate) last_sync: Option<SyncInfo>,
     pub(crate) activity: Vec<ActivityEntry>,
@@ -118,6 +122,8 @@ impl RytmdashApp {
             execute: ExecutePanel::default(),
             model: cache::load(),
             local_meta: localmeta::load(),
+            backup: BackupController::default(),
+            manifest: cache::load_project_manifest(&cache::default_dir()),
             ui_state: UiState::default(),
             last_sync: None,
             activity: Vec::new(),
@@ -192,6 +198,23 @@ impl RytmdashApp {
             );
         }
 
+        if let Some((ok, failed)) = self.backup.take_finished() {
+            self.manifest = cache::load_project_manifest(&cache::default_dir());
+            let (kind, title) = if failed == 0 {
+                (
+                    ActivityKind::Success,
+                    format!("Backed up {ok} projects to this computer"),
+                )
+            } else {
+                (
+                    ActivityKind::Warning,
+                    format!("Backed up {ok} projects · {failed} failed"),
+                )
+            };
+            self.toast(title.clone());
+            self.log_activity(kind, title, None);
+        }
+
         // Esc leaves the sample-trace state (PRD §16).
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.ui_state.kits.traced_slot = None;
@@ -230,7 +253,9 @@ impl RytmdashApp {
                 let in_port = self.connected_in_port();
                 views::import_page::show(ui, &mut self.import, in_port.as_deref(), ctx);
             }
-            Nav::Activity => views::activity::show(ui, &self.activity, &self.sync, &self.import),
+            Nav::Activity => {
+                views::activity::show(ui, &self.activity, &self.sync, &self.import, &self.backup)
+            }
             Nav::Diagnostics => {
                 views::diagnostics::show(ui, &self.watcher, self.model.as_ref(), self.last_sync)
             }

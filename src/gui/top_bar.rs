@@ -106,6 +106,7 @@ fn breadcrumb(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             ProjectTab::Kits => "Kits",
             ProjectTab::Samples => "Samples",
             ProjectTab::Patterns => "Patterns",
+            ProjectTab::SoundPool => "Sound Pool",
             ProjectTab::Overview => "Overview",
         };
         ui.label(RichText::new("/").color(theme::TEXT_MUTED));

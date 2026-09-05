@@ -482,32 +482,42 @@ fn track_inspector(
     }
 }
 
-/// All known kit-track uses of a sample slot, in plain language. The list is
-/// kit-oriented; pattern Sound-Lock uses are not indexed yet, and the UI says
-/// so instead of implying completeness (PRD §22).
+/// All known references to a sample slot, in plain language: kit tracks,
+/// Sound Pool sounds (via Sound Locks), and trig sample plocks (PRD §3.6).
 fn usage_list(ui: &mut egui::Ui, model: &ProjectModel, slot: u8) {
-    let usage = model.slot_usage();
-    match usage.get(&slot) {
-        Some(uses) => {
-            for u in uses {
-                ui.label(format!(
-                    "Kit {:02} {} · {}",
-                    u.kit_index + 1,
-                    names::kit_display_name(&u.kit_name, u.kit_index).text(),
-                    names::track_label(u.track),
-                ));
-            }
-        }
-        None => {
-            ui.label(RichText::new("No kit-track uses").color(theme::TEXT_MUTED));
-        }
+    let refs = model.slot_references(slot);
+    if refs.is_empty() {
+        ui.label(RichText::new("No known references").color(theme::TEXT_MUTED));
     }
-    ui.add_space(4.0);
-    ui.label(
-        RichText::new("Sound Lock uses are not indexed yet — this list may be incomplete.")
-            .color(theme::TEXT_MUTED)
-            .size(theme::FONT_META),
-    );
+    for u in &refs.kit_uses {
+        ui.label(format!(
+            "Kit {:02} {} · {}",
+            u.kit_index + 1,
+            names::kit_display_name(&u.kit_name, u.kit_index).text(),
+            names::track_label(u.track),
+        ));
+    }
+    for p in &refs.pool_uses {
+        ui.label(format!(
+            "Pool sound {:03} {}",
+            p.pool_index + 1,
+            p.sound_name.trim()
+        ));
+    }
+    for index in &refs.plock_patterns {
+        ui.label(format!(
+            "Pattern {} · trig sample plock",
+            pattern_display_name(*index)
+        ));
+    }
+    if !model.dependency_scan {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("Old cache — re-sync to index Sound Lock and plock uses.")
+                .color(theme::TEXT_MUTED)
+                .size(theme::FONT_META),
+        );
+    }
 }
 
 /// Default inspector content: every used sample slot as a draggable chip

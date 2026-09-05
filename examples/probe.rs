@@ -88,7 +88,7 @@ fn main() {
     let started = Instant::now();
     let mut chunks: Vec<DataChunk> = Vec::new();
     let result = client.download_data(&mut link, &path, |chunk, total| {
-        if chunks.len() % 8 == 0 {
+        if chunks.len().is_multiple_of(8) {
             println!("  chunk {} · {total} bytes so far", chunks.len());
         }
         chunks.push(chunk.clone());

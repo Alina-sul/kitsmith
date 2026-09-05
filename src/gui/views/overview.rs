@@ -45,10 +45,18 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 
     ui.add_space(theme::GAP_L);
     widgets::inspector_group(ui, "DATA COMPLETENESS", |ui| {
-        ui.label(format!(
-            "Sample names resolved for {loaded} loaded slots; Sound Lock and Scene/Performance \
-             data are not indexed yet."
-        ));
+        if model.dependency_scan {
+            ui.label(format!(
+                "Sample names resolved for {loaded} loaded slots. Dependency graph complete: \
+                 kit tracks, Sound Pool, Sound Locks and sample plocks are indexed. \
+                 Scene/Performance data is not parsed yet."
+            ));
+        } else {
+            ui.label(format!(
+                "Sample names resolved for {loaded} loaded slots. This cache predates the \
+                 dependency scan — re-sync to index Sound Locks and sample plocks."
+            ));
+        }
         ui.label(
             RichText::new("Full details live in Device & Diagnostics.")
                 .color(theme::TEXT_MUTED)

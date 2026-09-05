@@ -63,6 +63,7 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             .hint_text("Search projects…")
             .desired_width(f32::INFINITY),
     );
+    backup_controls(app, ui);
     ui.add_space(theme::GAP_S);
 
     ScrollArea::vertical().show(ui, |ui| {
@@ -139,6 +140,58 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             app.ui_state.project = selection;
         }
     });
+}
+
+/// "Back up all projects" — downloads every listed project payload into the
+/// local cache (read-only on the device).
+fn backup_controls(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+    use crate::gui::backup::BackupStatus;
+    match app.backup.status() {
+        BackupStatus::Running {
+            current,
+            done,
+            total,
+        } => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    RichText::new(format!("Backing up {done}/{total} · {current}"))
+                        .color(theme::TEXT_SECONDARY)
+                        .size(theme::FONT_META),
+                );
+                if ui.button("×").on_hover_text("Cancel").clicked() {
+                    app.backup.cancel();
+                }
+            });
+        }
+        status => {
+            let projects: Vec<(u32, String)> = app
+                .model
+                .as_ref()
+                .map(|m| m.projects.iter().map(|p| (p.id, p.name.clone())).collect())
+                .unwrap_or_default();
+            let in_port = app.connected_in_port();
+            let enabled = in_port.is_some() && !projects.is_empty();
+            let response = ui
+                .add_enabled(enabled, egui::Button::new("Back up all projects"))
+                .on_hover_text(
+                    "Download every project's raw data into the local cache. Read-only on the \
+                     device.",
+                )
+                .on_disabled_hover_text("Connect the Rytm and sync first");
+            if response.clicked() {
+                if let Some(port) = in_port {
+                    let ctx = ui.ctx().clone();
+                    app.backup
+                        .start(port, projects, move || ctx.request_repaint());
+                }
+            }
+            if let BackupStatus::Failed(err) = status {
+                ui.label(RichText::new("Backup failed").color(theme::DANGER))
+                    .on_hover_text(err);
+            }
+        }
+    }
 }
 
 /// The pinned row for the synced active project.

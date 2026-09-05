@@ -4,7 +4,7 @@
 use eframe::egui::{self, RichText};
 
 use crate::gui::app::{ago, page_title, ProjectSelection, ProjectTab, RytmdashApp};
-use crate::gui::views::{kits, overview, patterns, samples};
+use crate::gui::views::{kits, overview, patterns, pool, samples};
 use crate::gui::{theme, widgets};
 use crate::model::names;
 
@@ -60,6 +60,27 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
 
     alias_editor(app, ui, id, &native_name, alias.as_deref());
 
+    widgets::inspector_group(ui, "LOCAL BACKUP", |ui| match app.manifest.get(&id) {
+        Some(backup) => {
+            widgets::detail_line(ui, "Status", "Backed up on this computer");
+            widgets::detail_line(
+                ui,
+                "Size",
+                &format!("{} KB (compressed)", backup.bytes / 1024),
+            );
+            widgets::detail_line(ui, "Fingerprint", &format!("{:08x}", backup.crc));
+            widgets::detail_line(ui, "Name at backup", &backup.name);
+        }
+        None => {
+            ui.label(RichText::new("No local backup yet.").color(theme::TEXT_MUTED));
+            ui.label(
+                RichText::new("Use “Back up all projects” in the sidebar (device connected).")
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+            );
+        }
+    });
+
     widgets::inspector_group(ui, "NOT INDEXED", |ui| {
         ui.label(
             "Rytmdash can list this +Drive project slot but has not indexed its contents yet.",
@@ -67,9 +88,9 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
         ui.add_space(4.0);
         ui.label(
             RichText::new(
-                "Browsing kits and samples of non-active projects arrives with the project \
-                 indexer milestone. Until then, load the project on the device and press Sync \
-                 to inspect it.",
+                "The raw project data can already be backed up locally; decoding kits and \
+                 samples out of it arrives with the project indexer milestone. Until then, load \
+                 the project on the device and press Sync to inspect it.",
             )
             .color(theme::TEXT_SECONDARY),
         );
@@ -150,6 +171,7 @@ fn active_project(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         ProjectTab::Kits => kits::show(app, ui),
         ProjectTab::Samples => samples::show(app, ui),
         ProjectTab::Patterns => patterns::show(app, ui),
+        ProjectTab::SoundPool => pool::show(app, ui),
         ProjectTab::Overview => overview::show(app, ui),
     }
 }
@@ -206,6 +228,7 @@ fn tab_row(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             (ProjectTab::Kits, "Kits"),
             (ProjectTab::Samples, "Samples"),
             (ProjectTab::Patterns, "Patterns"),
+            (ProjectTab::SoundPool, "Sound Pool"),
             (ProjectTab::Overview, "Overview"),
         ] {
             let selected = app.ui_state.tab == tab;

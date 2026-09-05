@@ -2,6 +2,7 @@
 //! workspace views, inspectors and the plan modal.
 
 mod app;
+mod backup;
 mod execute;
 mod import;
 mod sidebar;

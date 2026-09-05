@@ -6,6 +6,7 @@ use std::time::Instant;
 use eframe::egui::{self, RichText, ScrollArea};
 
 use crate::gui::app::{ago, page_title};
+use crate::gui::backup::{BackupController, BackupStatus};
 use crate::gui::import::{ImportPanel, ImportState};
 use crate::gui::sync::{SyncController, SyncStatus};
 use crate::gui::{theme, widgets};
@@ -32,6 +33,7 @@ pub fn show(
     entries: &[ActivityEntry],
     sync: &SyncController,
     import: &ImportPanel,
+    backup: &BackupController,
 ) {
     page_title(ui, "Activity");
     ui.add_space(theme::GAP_M);
@@ -50,6 +52,21 @@ pub fn show(
                     progress.stage, progress.done, progress.total
                 ))
                 .color(theme::TEXT_SECONDARY),
+            );
+        });
+    }
+    if let BackupStatus::Running {
+        current,
+        done,
+        total,
+    } = backup.status()
+    {
+        anything_running = true;
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label("Project backup");
+            ui.label(
+                RichText::new(format!("{done}/{total} · {current}")).color(theme::TEXT_SECONDARY),
             );
         });
     }
