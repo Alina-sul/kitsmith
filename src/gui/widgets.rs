@@ -58,7 +58,9 @@ pub fn sample_pill(ui: &mut Ui, label: &str, selected: bool) -> Response {
             });
         })
         .response;
-    response.interact(Sense::click())
+    response
+        .interact(Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// The six-dot drag affordance (PRD §14.4), painted as a 2×3 dot matrix so it
@@ -113,7 +115,8 @@ pub fn list_row(
             content(ui);
         })
         .response
-        .interact(Sense::click());
+        .interact(Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.hovered() {
         ui.painter().rect_stroke(
             response.rect,

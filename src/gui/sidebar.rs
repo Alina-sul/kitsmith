@@ -21,7 +21,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 
     if app.ui_state.nav == Nav::Projects {
         ui.add_space(theme::GAP_M);
-        CollapsingHeader::new(
+        let _ = CollapsingHeader::new(
             RichText::new("PROJECTS")
                 .color(theme::TEXT_MUTED)
                 .size(theme::FONT_META)
@@ -30,7 +30,9 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         .default_open(true)
         .show(ui, |ui| {
             project_browser(app, ui);
-        });
+        })
+        .header_response
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {

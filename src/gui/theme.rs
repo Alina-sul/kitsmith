@@ -89,6 +89,9 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
 
     let mut visuals = egui::Visuals::dark();
+    // Buttons and selectable labels show a pointing hand on hover; custom
+    // clickable widgets add the same via `on_hover_cursor`.
+    visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
     visuals.override_text_color = Some(TEXT_PRIMARY);
     visuals.panel_fill = BG_APP;
     visuals.window_fill = SURFACE_ELEVATED;

@@ -373,7 +373,12 @@ fn pad_card(
 
     if let Some(slot) = toggle_trace {
         state.traced_slot = (state.traced_slot != Some(slot)).then_some(slot);
-    } else if zone_response.response.interact(Sense::click()).clicked() {
+    } else if zone_response
+        .response
+        .interact(Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
         state.selected_track = (state.selected_track != Some(track)).then_some(track);
     }
 
@@ -543,6 +548,7 @@ fn sample_rail(ui: &mut egui::Ui, model: &ProjectModel, state: &mut crate::gui::
                             let _ = widgets::sample_pill(ui, &label, traced);
                         })
                         .response
+                        .on_hover_cursor(egui::CursorIcon::Grab)
                         .on_hover_text("Drag onto a pad to assign this slot");
                     if response.clicked() {
                         state.traced_slot = (!traced).then_some(*slot);

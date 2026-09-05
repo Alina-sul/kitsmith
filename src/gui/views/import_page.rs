@@ -47,7 +47,9 @@ pub fn show(
         for (index, item_arc) in import.items().iter().enumerate() {
             let mut item = item_arc.lock().expect("import item lock poisoned");
             ui.horizontal(|ui| {
-                ui.checkbox(&mut item.selected, "");
+                let _ = ui
+                    .checkbox(&mut item.selected, "")
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.label(
                     RichText::new(&item.sample.name)
                         .color(theme::TEXT_PRIMARY)

@@ -126,6 +126,11 @@ fn pattern_cell(
         })
         .response
         .interact(Sense::click());
+    let response = if link.is_some() {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    };
     if response.clicked() && link.is_some() {
         *selected = (!is_selected).then_some(index);
     }

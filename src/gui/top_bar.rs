@@ -79,6 +79,7 @@ fn device_pill(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         })
         .response
         .interact(Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(hover);
     if response.clicked() {
         app.ui_state.nav = Nav::Diagnostics;
@@ -190,6 +191,7 @@ fn sync_result_badge(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                     .color(theme::WARNING),
             )
             .interact(Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text("Some objects did not answer. Click for details.");
         if response.clicked() {
             app.ui_state.nav = Nav::Diagnostics;

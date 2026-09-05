@@ -127,9 +127,12 @@ fn slot_row(
                 _ => RichText::new("Name unavailable").color(theme::TEXT_MUTED),
             };
             let id = Id::new(("slot-table-row", slot));
-            let _ = ui.dnd_drag_source(id, super::SlotDrag { slot }, |ui| {
-                ui.label(name);
-            });
+            let _ = ui
+                .dnd_drag_source(id, super::SlotDrag { slot }, |ui| {
+                    ui.label(name);
+                })
+                .response
+                .on_hover_cursor(egui::CursorIcon::Grab);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if referenced {
                     widgets::badge(ui, "IN USE", theme::SAMPLE_PURPLE);
