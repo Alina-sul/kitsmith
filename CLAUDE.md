@@ -5,9 +5,12 @@ Rytm over USB, reads its +Drive/project state, and displays it as a dashboard wh
 samples and other project entities (sounds, kits — later patterns) move between projects
 by **drag & drop**. It replaces the tedious device-menu + Elektron Transfer juggling.
 
-Language: **Rust**. Status: research done (`docs/`), M0+M1 built — library + thin
-binary (`midi/` transport, `device/` watcher, `gui/` egui shell), CI, tests in
-`tests/`. Milestones tracked in `docs/plan.md`.
+Language: **Rust**. Status: research done (`docs/`); milestones M0–M5 built as a
+stacked PR chain (#1→#4), **none hardware-verified yet**: `midi/` (inquiry, duplex
+link, SDS), `device/` (watcher, object sync, SDS upload), `model/` + `cache/`,
+`audio/` (WAV→48k/16bit mono), `ops/` (transaction plans, backup-first, read-back
+verify), `gui/` (dashboard, import queue, drag&drop + confirm modal). Milestones
+tracked in `docs/plan.md`.
 
 ## Commands
 
