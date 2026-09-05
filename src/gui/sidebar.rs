@@ -92,6 +92,22 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     let mut drop_req: Option<(u32, u32)> = None;
 
     ScrollArea::vertical().show(ui, |ui| {
+        // While a project is being dragged, auto-scroll when the pointer
+        // nears the top/bottom edge so far-away slots are reachable.
+        if egui::DragAndDrop::payload::<ProjectDrag>(ui.ctx()).is_some() {
+            if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                let clip = ui.clip_rect();
+                let margin = 56.0;
+                let speed = 14.0;
+                if pos.y < clip.top() + margin {
+                    ui.scroll_with_delta(egui::vec2(0.0, speed));
+                } else if pos.y > clip.bottom() - margin {
+                    ui.scroll_with_delta(egui::vec2(0.0, -speed));
+                }
+                ui.ctx().request_repaint();
+            }
+        }
+
         active_project_row(app, ui);
 
         let Some(model) = &app.model else {
@@ -196,6 +212,9 @@ fn project_row(
             theme::LIST_ROW_HEIGHT,
             |ui| {
                 ui.horizontal(|ui| {
+                    if rearrange {
+                        widgets::drag_handle(ui);
+                    }
                     ui.label(
                         RichText::new(format!("{id:03}"))
                             .color(theme::TEXT_MUTED)
