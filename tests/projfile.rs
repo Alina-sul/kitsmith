@@ -7,10 +7,10 @@ const PATTERNS_OFFSET: usize = 0x3364;
 const PATTERN_SIZE: usize = 0x332D;
 const PATTERN_KIT_OFFSET: usize = 0x3325;
 const KITS_OFFSET: usize = PATTERNS_OFFSET + 128 * PATTERN_SIZE + 0xA36;
-const KIT_SIZE: usize = 0xA32;
+const SAMPLES_OFFSET: usize = 0x1F94C9;
 
 fn fixture() -> Vec<u8> {
-    let mut bytes = vec![0u8; KITS_OFFSET + 128 * KIT_SIZE + 64];
+    let mut bytes = vec![0u8; SAMPLES_OFFSET + 128 * 16 + 64];
     bytes[..4].copy_from_slice(&[0xAC, 0x11, 0xD3, 0x03]);
     bytes[0x27..0x27 + 7].copy_from_slice(b"MY PROJ");
 
@@ -26,6 +26,11 @@ fn fixture() -> Vec<u8> {
     bytes[kit0 + 0x04..kit0 + 0x04 + 5].copy_from_slice(b"KIT A");
     let sound0 = kit0 + 0x2E + 0x0C;
     bytes[sound0..sound0 + 7].copy_from_slice(b"SOUND 1");
+
+    // Sample slot 3 loaded: hash 0xAABBCCDD, size 1000.
+    let entry = SAMPLES_OFFSET + 3 * 16;
+    bytes[entry..entry + 4].copy_from_slice(&0xAABB_CCDDu32.to_be_bytes());
+    bytes[entry + 4..entry + 8].copy_from_slice(&1000u32.to_be_bytes());
     bytes
 }
 
@@ -47,6 +52,10 @@ fn parses_name_kits_and_pattern_links() {
     assert!(snapshot.kit_in_use(0));
     assert!(snapshot.kit_in_use(1), "linked though unnamed");
     assert!(!snapshot.kit_in_use(2));
+    assert_eq!(snapshot.samples.len(), 1);
+    assert_eq!(snapshot.samples[0].slot, 3);
+    assert_eq!(snapshot.samples[0].hash, 0xAABB_CCDD);
+    assert_eq!(snapshot.samples[0].size, 1000);
 }
 
 #[test]

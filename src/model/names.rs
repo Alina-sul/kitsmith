@@ -35,9 +35,14 @@ impl ResolvedName {
     }
 }
 
+/// Strips NUL padding (fixed-width device name fields) and whitespace.
+pub fn clean(raw: &str) -> &str {
+    raw.trim_matches('\0').trim()
+}
+
 /// Resolves a track Sound name: native if present, else `"BD sound"`.
 pub fn sound_display_name(raw: &str, track: usize) -> ResolvedName {
-    let trimmed = raw.trim();
+    let trimmed = clean(raw);
     if trimmed.is_empty() {
         ResolvedName::Fallback(format!("{} sound", track_label(track)))
     } else {
@@ -47,7 +52,7 @@ pub fn sound_display_name(raw: &str, track: usize) -> ResolvedName {
 
 /// Resolves a kit name: native if present, else `"Kit 014"` (1-based).
 pub fn kit_display_name(raw: &str, index: usize) -> ResolvedName {
-    let trimmed = raw.trim();
+    let trimmed = clean(raw);
     if trimmed.is_empty() {
         ResolvedName::Fallback(format!("Kit {:03}", index + 1))
     } else {
@@ -57,7 +62,7 @@ pub fn kit_display_name(raw: &str, index: usize) -> ResolvedName {
 
 /// Resolves a project name: native if present, else `"Project 042"`.
 pub fn project_display_name(raw: &str, slot: u32) -> ResolvedName {
-    let trimmed = raw.trim();
+    let trimmed = clean(raw);
     if trimmed.is_empty() {
         ResolvedName::Fallback(format!("Project {slot:03}"))
     } else {
@@ -68,7 +73,7 @@ pub fn project_display_name(raw: &str, slot: u32) -> ResolvedName {
 /// Resolves a sample-slot name from an optional file-protocol lookup.
 /// `None` means the name exists on the device but was not resolved.
 pub fn sample_display_name(resolved: Option<&str>) -> ResolvedName {
-    match resolved.map(str::trim) {
+    match resolved.map(clean) {
         Some(name) if !name.is_empty() => ResolvedName::Native(name.to_owned()),
         _ => ResolvedName::Unavailable,
     }

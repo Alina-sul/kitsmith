@@ -125,6 +125,9 @@ pub struct RytmdashApp {
     pub(crate) last_sync: Option<SyncInfo>,
     /// Objects the last sync could not read (for Diagnostics).
     pub(crate) sync_misses: Vec<MissedObject>,
+    /// Which backed-up slot the active project most likely is (heuristic
+    /// match — the device does not report the loaded project).
+    pub(crate) active_guess: Option<u32>,
     pub(crate) activity: Vec<ActivityEntry>,
     toasts: Vec<(String, Instant)>,
 }
@@ -133,7 +136,7 @@ impl RytmdashApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
-        Self {
+        let mut app = Self {
             watcher: DeviceWatcher::spawn(move || ctx.request_repaint()),
             sync: SyncController::default(),
             import: ImportPanel::default(),
@@ -149,9 +152,12 @@ impl RytmdashApp {
             ui_state: UiState::default(),
             last_sync: None,
             sync_misses: Vec::new(),
+            active_guess: None,
             activity: Vec::new(),
             toasts: Vec::new(),
-        }
+        };
+        app.identify_active_project();
+        app
     }
 
     pub(crate) fn log_activity(
@@ -190,6 +196,65 @@ impl RytmdashApp {
         self.raw_snapshots.insert(slot, snapshot);
     }
 
+    /// Guesses which backed-up slot the active project is, by matching kit
+    /// names and sample-slot content hashes against every raw backup. The
+    /// device gives no direct way to know; this is a clearly-labeled
+    /// heuristic, recomputed after syncs and backups.
+    pub(crate) fn identify_active_project(&mut self) {
+        self.active_guess = None;
+        if self.model.is_none() {
+            return;
+        }
+        let slots: Vec<u32> = self
+            .manifest
+            .iter()
+            .filter(|(_, info)| info.raw)
+            .map(|(slot, _)| *slot)
+            .collect();
+        let mut best: Option<(u32, usize)> = None;
+        let mut tie = false;
+        for slot in slots {
+            self.ensure_raw_snapshot(slot);
+            let (Some(model), Some(Some(snapshot))) =
+                (self.model.as_ref(), self.raw_snapshots.get(&slot))
+            else {
+                continue;
+            };
+            let mut score = 0usize;
+            for (i, kit) in model.kits.iter().enumerate() {
+                let name = kit.name.trim();
+                if !name.is_empty() && snapshot.kits.get(i).is_some_and(|k| k.name.trim() == name) {
+                    score += 2;
+                }
+            }
+            for sample in &model.samples {
+                if sample.hash != 0
+                    && snapshot
+                        .samples
+                        .iter()
+                        .any(|s| s.slot == sample.slot && s.hash == sample.hash)
+                {
+                    score += 3;
+                }
+            }
+            match &mut best {
+                Some((_, top)) if score == *top => tie = true,
+                Some((slot_ref, top)) if score > *top => {
+                    *slot_ref = slot;
+                    *top = score;
+                    tie = false;
+                }
+                None => best = Some((slot, score)),
+                _ => {}
+            }
+        }
+        if let Some((slot, score)) = best {
+            if score >= 6 && !tie {
+                self.active_guess = Some(slot);
+            }
+        }
+    }
+
     /// Pulls finished background work into app state.
     fn absorb_events(&mut self, ctx: &egui::Context) {
         if let Some((model, missed)) = self.sync.take_finished() {
@@ -214,6 +279,7 @@ impl RytmdashApp {
             self.sync_misses = missed;
             self.log_activity(kind, title, detail);
             self.model = Some(model);
+            self.identify_active_project();
         }
 
         // Files dropped anywhere on the window enter the import queue.
@@ -242,6 +308,7 @@ impl RytmdashApp {
         if let Some((ok, failed)) = self.backup.take_finished() {
             self.manifest = cache::load_project_manifest(&cache::default_dir());
             self.raw_snapshots.clear();
+            self.identify_active_project();
             let (kind, title) = if failed == 0 {
                 (
                     ActivityKind::Success,

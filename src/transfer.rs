@@ -164,6 +164,70 @@ pub fn capture_kit(
     })
 }
 
+/// Builds a kit clipboard **from a backed-up project payload** — no device
+/// I/O at all. The raw kit record is re-encoded to sysex via libanalogrytm,
+/// validated by decoding it back, and its sample references get their
+/// content identity from the backup's sample-slot table.
+pub fn capture_kit_from_backup(
+    project_bytes: &[u8],
+    snapshot: &crate::device::projfile::RawProjectSnapshot,
+    project_label: &str,
+    kit_index: usize,
+) -> Result<KitClipboard, String> {
+    let raw = crate::device::projfile::kit_raw_record(project_bytes, kit_index)
+        .ok_or("kit record not found in the backup payload")?;
+    let kit_sysex = crate::device::rawconv::kit_raw_to_sysex(raw, kit_index)?;
+
+    // Decode what we just encoded — both a validation gate and the way to
+    // read the kit's sample references with the normal API.
+    let mut rytm = RytmProject::try_default().map_err(|e| e.to_string())?;
+    rytm.update_from_sysex_response(&kit_sysex)
+        .map_err(|e| format!("converted kit failed to decode: {e}"))?;
+    let kit = rytm
+        .kits()
+        .get(kit_index)
+        .ok_or("converted kit missing after decode")?;
+    let kit_name = kit.name().to_owned();
+
+    let mut samples = Vec::new();
+    let mut seen = BTreeSet::new();
+    for sound in kit.sounds().iter().take(12) {
+        let Some(slot) = slot_from_wire(sound.sample().slice_number()) else {
+            continue;
+        };
+        if !seen.insert(slot) {
+            continue;
+        }
+        let entry = snapshot.samples.iter().find(|s| s.slot == slot);
+        samples.push(SampleDep {
+            source_slot: slot,
+            name: entry.map_or_else(
+                || format!("slot {slot:03} (identity unknown)"),
+                |e| format!("slot {slot:03} · {} KB", e.size / 1024),
+            ),
+            path: String::new(),
+            size: entry.map_or(0, |e| e.size),
+            hash: entry.map_or(0, |e| e.hash),
+        });
+    }
+
+    Ok(KitClipboard {
+        captured_at_unix: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        source_hint: format!(
+            "Kit {:02} {} (from {project_label})",
+            kit_index + 1,
+            crate::model::names::clean(&kit_name)
+        ),
+        kit_index,
+        kit_name,
+        kit_sysex,
+        samples,
+    })
+}
+
 /// Builds the kit-paste preview against the synced target project (pure).
 pub fn plan_paste_kit(clip: &KitClipboard, target: &ProjectModel) -> KitPastePreview {
     let mut slot_remap = BTreeMap::new();

@@ -40,4 +40,27 @@ fn main() {
         })
         .collect();
     println!("pattern links: {}", linked_patterns.join(" "));
+    println!(
+        "sample slots loaded: {} — {:?}",
+        snapshot.samples.len(),
+        snapshot
+            .samples
+            .iter()
+            .take(6)
+            .map(|s| format!("slot{} {}KB {:08x}", s.slot, s.size / 1024, s.hash))
+            .collect::<Vec<_>>()
+    );
+
+    // End-to-end check of copy-from-backup: convert the first in-use kit.
+    if let Some(kit) = snapshot.kits.iter().find(|k| snapshot.kit_in_use(k.index)) {
+        match rytmdash::transfer::capture_kit_from_backup(&bytes, &snapshot, "backup", kit.index) {
+            Ok(clip) => println!(
+                "capture_kit_from_backup OK: '{}' · {} sample dep(s) · {} bytes sysex",
+                clip.source_hint,
+                clip.samples.len(),
+                clip.kit_sysex.len()
+            ),
+            Err(e) => println!("capture_kit_from_backup FAILED: {e}"),
+        }
+    }
 }

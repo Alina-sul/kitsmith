@@ -82,8 +82,10 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
         }
     });
 
+    let mut copy_kit: Option<usize> = None;
+    let mut index_now = false;
     match app.raw_snapshots.get(&id).and_then(Option::as_ref) {
-        Some(snapshot) => snapshot_contents(ui, snapshot, app.manifest.get(&id)),
+        Some(snapshot) => snapshot_contents(ui, snapshot, app.manifest.get(&id), &mut copy_kit),
         None => {
             widgets::inspector_group(ui, "CONTENTS NOT INDEXED", |ui| {
                 if app.manifest.contains_key(&id) {
@@ -91,25 +93,73 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
                         "This slot's backup is in the older compressed format, which cannot be \
                          parsed.",
                     );
-                    ui.label(
-                        RichText::new(
-                            "Run “Back up all projects” again (device connected) — new backups \
-                             use the raw format and show kits and patterns here.",
-                        )
-                        .color(theme::TEXT_SECONDARY),
-                    );
                 } else {
                     ui.label("No local backup of this slot yet.");
-                    ui.label(
-                        RichText::new(
-                            "Use “Back up all projects” in the sidebar (device connected); \
-                             afterwards this page shows the project's kits and patterns.",
-                        )
-                        .color(theme::TEXT_SECONDARY),
-                    );
+                }
+                ui.label(
+                    RichText::new(
+                        "Index it to see this project's kits, patterns and samples here — and \
+                         to copy kits out of it.",
+                    )
+                    .color(theme::TEXT_SECONDARY),
+                );
+                ui.add_space(4.0);
+                let connected = app.connected_in_port().is_some();
+                let busy = app.backup.is_running();
+                if busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Downloading…");
+                    });
+                } else if ui
+                    .add_enabled(connected, egui::Button::new("Index this project (~10 s)"))
+                    .on_disabled_hover_text("Connect the Rytm first")
+                    .clicked()
+                {
+                    index_now = true;
                 }
             });
         }
+    }
+
+    if index_now {
+        if let Some(port) = app.connected_in_port() {
+            let ctx = ui.ctx().clone();
+            app.backup
+                .start(port, vec![(id, native_name.clone())], move || {
+                    ctx.request_repaint();
+                });
+        }
+    }
+    if let Some(kit_index) = copy_kit {
+        copy_kit_from_backup(app, id, &native_display, kit_index);
+    }
+}
+
+/// Builds a kit clipboard from this project's backup (no device I/O) and
+/// stores it for pasting.
+fn copy_kit_from_backup(app: &mut RytmdashApp, id: u32, project_label: &str, kit_index: usize) {
+    let Some(snapshot) = app.raw_snapshots.get(&id).and_then(Option::as_ref).cloned() else {
+        return;
+    };
+    let Some(bytes) = crate::cache::load_project_backup(&crate::cache::default_dir(), id) else {
+        app.toast("Backup file missing — re-index this project.".to_owned());
+        return;
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::transfer::capture_kit_from_backup(&bytes, &snapshot, project_label, kit_index)
+    }))
+    .unwrap_or_else(|_| Err("internal error while converting the kit".into()));
+    match result {
+        Ok(clip) => {
+            let hint = clip.source_hint.clone();
+            let _ = crate::transfer::save_kit(&clip);
+            app.kit_clipboard = Some(clip);
+            app.toast(format!(
+                "Copied {hint} — paste it from the Kits tab of the target project"
+            ));
+        }
+        Err(e) => app.toast(format!("Copy failed: {e}")),
     }
 }
 
@@ -119,6 +169,7 @@ fn snapshot_contents(
     ui: &mut egui::Ui,
     snapshot: &crate::device::projfile::RawProjectSnapshot,
     backup: Option<&crate::cache::ProjectBackup>,
+    copy_kit: &mut Option<usize>,
 ) {
     if let Some(backup) = backup {
         ui.label(
@@ -134,55 +185,81 @@ fn snapshot_contents(
     }
 
     widgets::inspector_group(ui, "KITS", |ui| {
+        ui.label(
+            RichText::new("Right-click a kit to copy it into another project.")
+                .color(theme::TEXT_MUTED)
+                .size(theme::FONT_META),
+        );
+        ui.add_space(4.0);
         let mut any = false;
         for kit in &snapshot.kits {
             if !snapshot.kit_in_use(kit.index) {
                 continue;
             }
             any = true;
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("{:02}", kit.index + 1))
-                        .color(theme::TEXT_MUTED)
-                        .monospace(),
-                );
-                ui.label(
-                    RichText::new(names::kit_display_name(&kit.name, kit.index).text())
-                        .color(theme::TEXT_PRIMARY)
-                        .strong(),
-                );
-                let patterns: Vec<String> = snapshot
-                    .patterns
-                    .iter()
-                    .filter(|p| p.kit_link == Some(kit.index as u8))
-                    .map(|p| crate::model::pattern_display_name(p.index))
-                    .collect();
-                if !patterns.is_empty() {
-                    ui.label(
-                        RichText::new(format!("used by {}", patterns.join(" · ")))
-                            .color(theme::TEXT_SECONDARY)
-                            .size(theme::FONT_META),
-                    );
+            let row = widgets::list_row(ui, false, 36.0, |ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{:02}", kit.index + 1))
+                                .color(theme::TEXT_MUTED)
+                                .monospace(),
+                        );
+                        ui.label(
+                            RichText::new(names::kit_display_name(&kit.name, kit.index).text())
+                                .color(theme::TEXT_PRIMARY)
+                                .strong(),
+                        );
+                        let patterns: Vec<String> = snapshot
+                            .patterns
+                            .iter()
+                            .filter(|p| p.kit_link == Some(kit.index as u8))
+                            .map(|p| crate::model::pattern_display_name(p.index))
+                            .collect();
+                        if !patterns.is_empty() {
+                            ui.label(
+                                RichText::new(format!("used by {}", patterns.join(" · ")))
+                                    .color(theme::TEXT_SECONDARY)
+                                    .size(theme::FONT_META),
+                            );
+                        }
+                    });
+                    let sounds: Vec<&str> = kit
+                        .sound_names
+                        .iter()
+                        .filter(|n| !n.is_empty())
+                        .map(String::as_str)
+                        .collect();
+                    if !sounds.is_empty() {
+                        ui.label(
+                            RichText::new(sounds.join(" · "))
+                                .color(theme::TEXT_MUTED)
+                                .size(theme::FONT_META),
+                        );
+                    }
+                });
+            });
+            row.context_menu(|ui| {
+                if ui.button("Copy kit").clicked() {
+                    *copy_kit = Some(kit.index);
+                    ui.close();
                 }
             });
-            let sounds: Vec<&str> = kit
-                .sound_names
-                .iter()
-                .filter(|n| !n.is_empty())
-                .map(String::as_str)
-                .collect();
-            if !sounds.is_empty() {
-                ui.label(
-                    RichText::new(format!("    {}", sounds.join(" · ")))
-                        .color(theme::TEXT_MUTED)
-                        .size(theme::FONT_META),
-                );
-            }
         }
         if !any {
             ui.label(RichText::new("No kits in use.").color(theme::TEXT_MUTED));
         }
     });
+
+    if !snapshot.samples.is_empty() {
+        widgets::inspector_group(ui, "SAMPLE SLOTS", |ui| {
+            ui.label(format!(
+                "{} sample slots loaded ({} KB total)",
+                snapshot.samples.len(),
+                snapshot.samples.iter().map(|s| s.size / 1024).sum::<u32>()
+            ));
+        });
+    }
 
     widgets::inspector_group(ui, "PATTERNS", |ui| {
         let with_links: Vec<String> = snapshot
@@ -315,7 +392,30 @@ fn active_project(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 /// Project header (PRD §8): name, live/cached/partial state, sync timestamp.
 fn header(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        page_title(ui, "Active project");
+        // The device never reports which project is loaded; when the synced
+        // contents match one of the local backups, surface that clearly as a
+        // best-effort identification.
+        match app.active_guess {
+            Some(slot) => {
+                let name = app
+                    .manifest
+                    .get(&slot)
+                    .map(|b| b.name.clone())
+                    .unwrap_or_default();
+                page_title(ui, names::project_display_name(&name, slot).text());
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!("Active project · matches backup {slot:03}"))
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::FONT_META),
+                )
+                .on_hover_text(
+                    "Best match of kit names and sample content against your local backups — \
+                     the device does not report which project is loaded, so this is inferred.",
+                );
+            }
+            None => page_title(ui, "Active project"),
+        }
         ui.add_space(theme::GAP_S);
         let connected = app.connected_in_port().is_some();
         match (&app.model, app.last_sync) {

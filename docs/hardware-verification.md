@@ -31,7 +31,15 @@ Device: Analog Rytm MKII, OS 1.72, USB-MIDI. Probe: `cargo run --example probe`
   at 0x37 · 128 patterns at 0x3364 (0x332D each, kit link at +0x3325) ·
   work kit at 0x19C9E4 (0xA36) · 128 kits at 0x19D41A (0xA32 each, name at
   +0x04, 12 sounds from +0x2E stride 162, sound name at +0x0C).
-- Settings/songs/pool-sounds/sample-table regions not yet mapped.
+- **Sample-slot table** found at 0x1F94C9: 16-byte entries, slot i at
+  base + i·16 (i = 1..127), fields hash u32be + size u32be + 8 reserved;
+  a header entry carrying the 0x7F count precedes slot 1. Hashes are the
+  same content identity as the RAM-slot table → cross-project matching.
+- **Raw kit records re-encode to writable sysex** via libanalogrytm
+  (`ar_kit_raw_to_syx`, meta obj_type = AR_TYPE_KIT, container 0x0101) —
+  round-trip proven in tests and against a real backup. Note: names decoded
+  from raw records are NUL-padded.
+- Settings/songs/pool-sounds regions not yet mapped.
 - The compression used for compressed transfers remains unknown (not zlib/
   lzma; elektroid stores it opaquely) — moot now that raw works.
 

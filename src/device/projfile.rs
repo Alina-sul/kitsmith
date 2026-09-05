@@ -39,8 +39,14 @@ const KIT_SOUNDS_OFFSET: usize = 0x2E;
 const SOUND_SIZE: usize = 162;
 const SOUND_NAME_OFFSET: usize = 0x0C;
 
-/// Minimum payload length that contains the full kit array.
-const MIN_RAW_LEN: usize = KITS_OFFSET + 128 * KIT_SIZE;
+// Sample-slot table (found empirically; a 16-byte header entry carrying the
+// 0x7F count precedes slot 1). Entry i (1..=127): hash u32be, size u32be,
+// 8 reserved bytes.
+const SAMPLES_OFFSET: usize = 0x1F94C9;
+const SAMPLE_ENTRY_SIZE: usize = 16;
+
+/// Minimum payload length that contains all parsed regions.
+const MIN_RAW_LEN: usize = SAMPLES_OFFSET + 128 * SAMPLE_ENTRY_SIZE;
 
 /// One kit as read from a raw project payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -59,12 +65,23 @@ pub struct RawPattern {
     pub kit_link: Option<u8>,
 }
 
-/// Kits + patterns of one non-active project, read from its backup.
+/// One used sample slot of a project, by content identity.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RawSampleSlot {
+    pub slot: u8,
+    pub hash: u32,
+    pub size: u32,
+}
+
+/// Kits + patterns + sample slots of one project, read from its backup.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RawProjectSnapshot {
     pub name: String,
     pub kits: Vec<RawKit>,
     pub patterns: Vec<RawPattern>,
+    /// Used sample slots (hash+size identity; names live on the +Drive).
+    #[serde(default)]
+    pub samples: Vec<RawSampleSlot>,
 }
 
 impl RawProjectSnapshot {
@@ -137,11 +154,30 @@ pub fn parse_raw_project(bytes: &[u8]) -> Option<RawProjectSnapshot> {
         })
         .collect();
 
+    let samples = (1..=127u8)
+        .filter_map(|slot| {
+            let base = SAMPLES_OFFSET + usize::from(slot) * SAMPLE_ENTRY_SIZE;
+            let hash = u32::from_be_bytes(bytes[base..base + 4].try_into().ok()?);
+            let size = u32::from_be_bytes(bytes[base + 4..base + 8].try_into().ok()?);
+            (hash != 0 && size != 0).then_some(RawSampleSlot { slot, hash, size })
+        })
+        .collect();
+
     Some(RawProjectSnapshot {
         name,
         kits,
         patterns,
+        samples,
     })
+}
+
+/// The raw kit record bytes for `kit_index`, for re-encoding into sysex.
+pub fn kit_raw_record(bytes: &[u8], kit_index: usize) -> Option<&[u8]> {
+    if !is_raw_project(bytes) || kit_index > 127 {
+        return None;
+    }
+    let base = KITS_OFFSET + kit_index * KIT_SIZE;
+    bytes.get(base..base + KIT_SIZE)
 }
 
 /// Reads a fixed-capacity, NUL-terminated device name; non-ASCII bytes are
