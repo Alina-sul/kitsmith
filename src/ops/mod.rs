@@ -109,6 +109,26 @@ impl Plan {
         })
     }
 
+    /// A plan that writes a transferred kit into the active project.
+    /// Always backs up first (the active project changed since any earlier
+    /// session backup — that is the point of a cross-project paste).
+    pub fn paste_kit(paste: &crate::transfer::MaterializedKitPaste) -> Self {
+        Self {
+            title: format!("Copy kit {:02} into this project", paste.kit_index + 1),
+            steps: vec![
+                OpStep::BackupProject,
+                OpStep::SendObject {
+                    label: paste.write.label.clone(),
+                    sysex: paste.write.sysex.clone(),
+                },
+                OpStep::VerifyKitSlots {
+                    kit_index: paste.kit_index,
+                    expected: paste.expected_kit_slots.clone(),
+                },
+            ],
+        }
+    }
+
     /// A plan that writes a transferred pattern (+ kit + pool sounds) into
     /// the active project. Always backs up first — the active project has
     /// changed since any earlier session backup (that is the whole point of

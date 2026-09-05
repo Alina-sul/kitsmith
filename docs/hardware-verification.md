@@ -22,6 +22,26 @@ Device: Analog Rytm MKII, OS 1.72, USB-MIDI. Probe: `cargo run --example probe`
 | Pattern/kit/pool-sound object writes (pattern paste) | **pending** | encode→decode round-trips offline (tests/transfer.rs); first hardware run should target a scratch project | MockBackend tests only |
 | Data write (0x57–0x59), move/copy/clear (0x5a–0x5c) | not implemented | write side gated on WP0 write verification | — |
 
+## Raw project format (verified live, 2026-09-05)
+
+- `DATA_READ_OPEN` with compression flag **0** is honored: the device sends
+  the raw ~2,095,830-byte project payload (~8.7 s vs ~1.7 s compressed).
+- Layout (validated against a real project + libanalogrytm FW1.70 sizes,
+  parsed by `device/projfile.rs`): header with name at 0x27 · work pattern
+  at 0x37 · 128 patterns at 0x3364 (0x332D each, kit link at +0x3325) ·
+  work kit at 0x19C9E4 (0xA36) · 128 kits at 0x19D41A (0xA32 each, name at
+  +0x04, 12 sounds from +0x2E stride 162, sound name at +0x0C).
+- Settings/songs/pool-sounds/sample-table regions not yet mapped.
+- The compression used for compressed transfers remains unknown (not zlib/
+  lzma; elektroid stores it opaquely) — moot now that raw works.
+
+## Sysex transport finding
+
+- CoreMIDI fragments large sysex across packets; the original link callback
+  dropped continuations → consistent "reply received but not understood"
+  partial syncs on plock-heavy kits/patterns. Fixed by reassembly in
+  `midi/link.rs` (`SysexAssembler`, tested).
+
 ## Object-API findings (rytm-rs 0.1.3, source-verified)
 
 - **Sound Locks readable**: `Trig::sound_lock()` (255 = none, 0–127 = Sound

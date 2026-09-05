@@ -33,15 +33,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
             .show(ui, |ui| {
                 if let Some(index) = *selected {
-                    if let Some(kit) = pattern_inspector(
-                        ui,
-                        model,
-                        index,
-                        selected,
-                        connected.is_some(),
-                        capturing,
-                        &mut request_capture,
-                    ) {
+                    if let Some(kit) = pattern_inspector(ui, model, index, selected) {
                         jump_kit = Some(kit);
                     }
                 } else {
@@ -69,8 +61,19 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                         .color(theme::TEXT_SECONDARY),
                 );
                 ui.add_space(theme::GAP_S);
+                ui.label(
+                    RichText::new("Right-click a pattern to copy it for transfer.")
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::FONT_META),
+                );
                 ScrollArea::vertical().show(ui, |ui| {
-                    pattern_map(ui, model, selected);
+                    pattern_map(
+                        ui,
+                        model,
+                        selected,
+                        connected.is_some() && !capturing,
+                        &mut request_capture,
+                    );
                 });
             });
     }
@@ -83,8 +86,12 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     if let Some(index) = request_capture {
         if let (Some(port), Some(model)) = (connected.clone(), app.model.clone()) {
             let repaint = ctx.clone();
-            app.capture
-                .start(port, model, index, move || repaint.request_repaint());
+            app.capture.start(
+                port,
+                model,
+                crate::gui::transfer_ctl::CaptureJob::Pattern(index),
+                move || repaint.request_repaint(),
+            );
         }
     }
     if open_paste {
@@ -301,7 +308,14 @@ fn paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
 }
 
 /// 8 banks (A–H) × 16 patterns; cells with a synced link show their kit.
-fn pattern_map(ui: &mut egui::Ui, model: &ProjectModel, selected: &mut Option<usize>) {
+/// Right-click a cell for transfer actions (PRD §36).
+fn pattern_map(
+    ui: &mut egui::Ui,
+    model: &ProjectModel,
+    selected: &mut Option<usize>,
+    can_capture: bool,
+    request_capture: &mut Option<usize>,
+) {
     for bank in 0..8 {
         widgets::section_label(ui, &format!("BANK {}", (b'A' + bank as u8) as char));
         ui.add_space(2.0);
@@ -309,7 +323,7 @@ fn pattern_map(ui: &mut egui::Ui, model: &ProjectModel, selected: &mut Option<us
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for pos in 0..16 {
                 let index = bank * 16 + pos;
-                pattern_cell(ui, model, index, selected);
+                pattern_cell(ui, model, index, selected, can_capture, request_capture);
             }
         });
         ui.add_space(theme::GAP_M);
@@ -321,6 +335,8 @@ fn pattern_cell(
     model: &ProjectModel,
     index: usize,
     selected: &mut Option<usize>,
+    can_capture: bool,
+    request_capture: &mut Option<usize>,
 ) {
     let link = model.patterns.iter().find(|p| p.index == index);
     let is_selected = *selected == Some(index);
@@ -376,6 +392,22 @@ fn pattern_cell(
     } else {
         response
     };
+    if link.is_some() {
+        response.context_menu(|ui| {
+            if ui
+                .add_enabled(can_capture, egui::Button::new("Copy for transfer"))
+                .on_hover_text(
+                    "Fresh-reads this pattern, its kit and Sound-locked pool sounds into the \
+                     transfer clipboard.",
+                )
+                .on_disabled_hover_text("Connect the Rytm first")
+                .clicked()
+            {
+                *request_capture = Some(index);
+                ui.close();
+            }
+        });
+    }
     if response.clicked() && link.is_some() {
         *selected = (!is_selected).then_some(index);
     }
@@ -388,9 +420,6 @@ fn pattern_inspector(
     model: &ProjectModel,
     index: usize,
     selected: &mut Option<usize>,
-    can_capture: bool,
-    capturing: bool,
-    request_capture: &mut Option<usize>,
 ) -> Option<usize> {
     let mut jump = None;
     ui.horizontal(|ui| {
@@ -402,25 +431,6 @@ fn pattern_inspector(
         });
     });
     ui.add_space(theme::GAP_S);
-
-    widgets::inspector_group(ui, "TRANSFER", |ui| {
-        if capturing {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Capturing pattern + kit…");
-            });
-        } else if ui
-            .add_enabled(can_capture, egui::Button::new("Copy for transfer"))
-            .on_hover_text(
-                "Fresh-reads this pattern, its kit and Sound-locked pool sounds into the \
-                 transfer clipboard. Then load another project on the device, sync, and paste.",
-            )
-            .on_disabled_hover_text("Connect the Rytm first")
-            .clicked()
-        {
-            *request_capture = Some(index);
-        }
-    });
 
     widgets::inspector_group(ui, "LINKED KIT", |ui| {
         match model

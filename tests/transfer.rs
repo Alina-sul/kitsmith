@@ -171,6 +171,61 @@ fn clipboard_serde_round_trips() {
     assert_eq!(back, clip);
 }
 
+#[test]
+fn kit_transfer_remaps_and_round_trips() {
+    use rytmdash::transfer::{materialize_kit, plan_paste_kit, KitClipboard};
+
+    let mut rytm = RytmProject::try_default().expect("default project");
+    rytm.kits_mut()[9].sounds_mut()[0]
+        .sample_mut()
+        .set_slice_number(42)
+        .unwrap();
+    rytm.kits_mut()[9].sounds_mut()[2]
+        .sample_mut()
+        .set_slice_number(7)
+        .unwrap();
+    let clip = KitClipboard {
+        captured_at_unix: 0,
+        source_hint: "Kit 10".into(),
+        kit_index: 9,
+        kit_name: "SRCKIT".into(),
+        kit_sysex: rytm.kits()[9].as_sysex().unwrap(),
+        samples: vec![
+            SampleDep {
+                source_slot: 42,
+                name: "Crash.wav".into(),
+                path: "/crash".into(),
+                size: 100,
+                hash: 0xAA,
+            },
+            SampleDep {
+                source_slot: 7,
+                name: "Lost.wav".into(),
+                path: String::new(),
+                size: 0,
+                hash: 0,
+            },
+        ],
+    };
+    let preview = plan_paste_kit(&clip, &target_model());
+    assert_eq!(preview.slot_remap.get(&42), Some(&9));
+    assert_eq!(preview.missing.len(), 1);
+
+    let paste = materialize_kit(&clip, &preview).expect("materialize");
+    assert_eq!(paste.expected_kit_slots[0], Some(9));
+    assert_eq!(paste.expected_kit_slots[2], None, "unmatched → SMP off");
+
+    let mut verify = RytmProject::try_default().unwrap();
+    verify
+        .update_from_sysex_response(&paste.write.sysex)
+        .unwrap();
+    assert_eq!(verify.kits()[9].sounds()[0].sample().slice_number(), 9);
+
+    let plan = Plan::paste_kit(&paste);
+    assert_eq!(plan.steps.len(), 3, "backup, send, verify");
+    assert_eq!(plan.steps[0], OpStep::BackupProject);
+}
+
 /// Mock-executes a full paste plan: mismatching read-back must fail the
 /// verification step, matching read-back must succeed.
 #[test]

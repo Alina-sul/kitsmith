@@ -132,15 +132,19 @@ fn run_backup(
         on_change();
 
         let path = format!("{PROJECTS_PATH}/{slot}");
-        match client.download_data(&mut link, &path, |_, _| {}) {
+        // Uncompressed: slower than the compressed transfer, but the raw
+        // format is what the project parser understands.
+        match client.download_data(&mut link, &path, false, |_, _| {}) {
             Some(download) => {
                 let fingerprint = crc32(0, &download.bytes);
+                let raw = crate::device::projfile::is_raw_project(&download.bytes);
                 match cache::save_project_backup(
                     &cache_dir,
                     *slot,
                     name,
                     &download.bytes,
                     fingerprint,
+                    raw,
                 ) {
                     Ok(()) => ok += 1,
                     Err(_) => failed += 1,

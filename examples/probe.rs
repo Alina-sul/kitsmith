@@ -87,7 +87,7 @@ fn main() {
     );
     let started = Instant::now();
     let mut chunks: Vec<DataChunk> = Vec::new();
-    let result = client.download_data(&mut link, &path, |chunk, total| {
+    let result = client.download_data(&mut link, &path, true, |chunk, total| {
         if chunks.len().is_multiple_of(8) {
             println!("  chunk {} · {total} bytes so far", chunks.len());
         }
@@ -126,5 +126,48 @@ fn main() {
             );
         }
         None => println!("download failed / no reply"),
+    }
+
+    // Does the device honor compression=0 and send the raw payload?
+    println!("downloading '{path}' UNCOMPRESSED…");
+    let started = Instant::now();
+    let raw = client.download_data(&mut link, &path, false, |_, _| {});
+    match raw {
+        Some(download) => {
+            println!(
+                "raw download: {} bytes in {:.1}s, compressed flag echoed = {}",
+                download.bytes.len(),
+                started.elapsed().as_secs_f64(),
+                download.compressed
+            );
+            let head: Vec<String> = download
+                .bytes
+                .iter()
+                .take(32)
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            println!("first 32 bytes: {}", head.join(" "));
+            // Scan for printable ASCII runs (kit/project names live somewhere).
+            let mut runs: Vec<(usize, String)> = Vec::new();
+            let mut start = None;
+            for (i, &b) in download.bytes.iter().enumerate() {
+                if (0x20..0x7F).contains(&b) {
+                    if start.is_none() {
+                        start = Some(i);
+                    }
+                } else if let Some(s) = start.take() {
+                    if i - s >= 5 {
+                        let text: String =
+                            download.bytes[s..i].iter().map(|&b| b as char).collect();
+                        runs.push((s, text));
+                    }
+                }
+            }
+            println!("ASCII runs (≥5 chars), first 25 of {}:", runs.len());
+            for (offset, text) in runs.iter().take(25) {
+                println!("  0x{offset:06x}: '{text}'");
+            }
+        }
+        None => println!("uncompressed download failed / no reply"),
     }
 }

@@ -33,18 +33,23 @@ pub struct ProjectBackup {
     pub crc: u32,
     /// Unix seconds when the backup was taken.
     pub taken_at: u64,
+    /// True when the payload is the raw (uncompressed) format the project
+    /// parser understands; false for older compressed backups.
+    #[serde(default)]
+    pub raw: bool,
 }
 
 /// Manifest: slot id → backup info.
 pub type ProjectManifest = BTreeMap<u32, ProjectBackup>;
 
-/// Saves one project's raw payload and updates the manifest.
+/// Saves one project's payload and updates the manifest.
 pub fn save_project_backup(
     dir: &Path,
     slot: u32,
     name: &str,
     payload: &[u8],
     crc: u32,
+    raw: bool,
 ) -> io::Result<()> {
     let projects_dir = dir.join(PROJECTS_SUBDIR);
     std::fs::create_dir_all(&projects_dir)?;
@@ -60,10 +65,16 @@ pub fn save_project_backup(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
+            raw,
         },
     );
     let json = serde_json::to_vec_pretty(&manifest).map_err(io::Error::other)?;
     std::fs::write(dir.join(PROJECTS_MANIFEST_FILE), json)
+}
+
+/// Reads one backed-up project payload, if present.
+pub fn load_project_backup(dir: &Path, slot: u32) -> Option<Vec<u8>> {
+    std::fs::read(dir.join(PROJECTS_SUBDIR).join(format!("{slot:03}.bin"))).ok()
 }
 
 /// Loads the backup manifest from `dir` (empty when absent/unreadable).

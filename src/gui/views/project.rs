@@ -15,10 +15,10 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     }
 }
 
-/// A +Drive project slot whose contents are not indexed yet (WP11). The UI is
-/// honest about that instead of faking contents (PRD §27), and hosts the
-/// local-label editor — the rename Rytmdash can offer today.
+/// A +Drive project slot: local label editor, backup state, and — when a raw
+/// backup exists — its actual kits and patterns, parsed from the snapshot.
 fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
+    app.ensure_raw_snapshot(id);
     let native_name = app
         .model
         .as_ref()
@@ -63,11 +63,12 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
     widgets::inspector_group(ui, "LOCAL BACKUP", |ui| match app.manifest.get(&id) {
         Some(backup) => {
             widgets::detail_line(ui, "Status", "Backed up on this computer");
-            widgets::detail_line(
-                ui,
-                "Size",
-                &format!("{} KB (compressed)", backup.bytes / 1024),
-            );
+            let form = if backup.raw {
+                "raw"
+            } else {
+                "compressed, older format"
+            };
+            widgets::detail_line(ui, "Size", &format!("{} KB ({form})", backup.bytes / 1024));
             widgets::detail_line(ui, "Fingerprint", &format!("{:08x}", backup.crc));
             widgets::detail_line(ui, "Name at backup", &backup.name);
         }
@@ -81,20 +82,155 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
         }
     });
 
-    widgets::inspector_group(ui, "NOT INDEXED", |ui| {
+    match app.raw_snapshots.get(&id).and_then(Option::as_ref) {
+        Some(snapshot) => snapshot_contents(ui, snapshot, app.manifest.get(&id)),
+        None => {
+            widgets::inspector_group(ui, "CONTENTS NOT INDEXED", |ui| {
+                if app.manifest.contains_key(&id) {
+                    ui.label(
+                        "This slot's backup is in the older compressed format, which cannot be \
+                         parsed.",
+                    );
+                    ui.label(
+                        RichText::new(
+                            "Run “Back up all projects” again (device connected) — new backups \
+                             use the raw format and show kits and patterns here.",
+                        )
+                        .color(theme::TEXT_SECONDARY),
+                    );
+                } else {
+                    ui.label("No local backup of this slot yet.");
+                    ui.label(
+                        RichText::new(
+                            "Use “Back up all projects” in the sidebar (device connected); \
+                             afterwards this page shows the project's kits and patterns.",
+                        )
+                        .color(theme::TEXT_SECONDARY),
+                    );
+                }
+            });
+        }
+    }
+}
+
+/// Read-only kits + patterns of a backed-up project (PRD §27 satisfied with
+/// real parsed data, clearly marked as a snapshot).
+fn snapshot_contents(
+    ui: &mut egui::Ui,
+    snapshot: &crate::device::projfile::RawProjectSnapshot,
+    backup: Option<&crate::cache::ProjectBackup>,
+) {
+    if let Some(backup) = backup {
         ui.label(
-            "Rytmdash can list this +Drive project slot but has not indexed its contents yet.",
+            RichText::new(format!(
+                "Snapshot from the local backup taken {} — read-only; re-run the backup to \
+                 refresh.",
+                epoch_ago(backup.taken_at)
+            ))
+            .color(theme::TEXT_MUTED)
+            .size(theme::FONT_META),
         );
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "The raw project data can already be backed up locally; decoding kits and \
-                 samples out of it arrives with the project indexer milestone. Until then, load \
-                 the project on the device and press Sync to inspect it.",
-            )
-            .color(theme::TEXT_SECONDARY),
-        );
+        ui.add_space(theme::GAP_S);
+    }
+
+    widgets::inspector_group(ui, "KITS", |ui| {
+        let mut any = false;
+        for kit in &snapshot.kits {
+            if !snapshot.kit_in_use(kit.index) {
+                continue;
+            }
+            any = true;
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{:02}", kit.index + 1))
+                        .color(theme::TEXT_MUTED)
+                        .monospace(),
+                );
+                ui.label(
+                    RichText::new(names::kit_display_name(&kit.name, kit.index).text())
+                        .color(theme::TEXT_PRIMARY)
+                        .strong(),
+                );
+                let patterns: Vec<String> = snapshot
+                    .patterns
+                    .iter()
+                    .filter(|p| p.kit_link == Some(kit.index as u8))
+                    .map(|p| crate::model::pattern_display_name(p.index))
+                    .collect();
+                if !patterns.is_empty() {
+                    ui.label(
+                        RichText::new(format!("used by {}", patterns.join(" · ")))
+                            .color(theme::TEXT_SECONDARY)
+                            .size(theme::FONT_META),
+                    );
+                }
+            });
+            let sounds: Vec<&str> = kit
+                .sound_names
+                .iter()
+                .filter(|n| !n.is_empty())
+                .map(String::as_str)
+                .collect();
+            if !sounds.is_empty() {
+                ui.label(
+                    RichText::new(format!("    {}", sounds.join(" · ")))
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::FONT_META),
+                );
+            }
+        }
+        if !any {
+            ui.label(RichText::new("No kits in use.").color(theme::TEXT_MUTED));
+        }
     });
+
+    widgets::inspector_group(ui, "PATTERNS", |ui| {
+        let with_links: Vec<String> = snapshot
+            .patterns
+            .iter()
+            .filter_map(|p| {
+                p.kit_link.map(|k| {
+                    format!(
+                        "{} → kit {:02}",
+                        crate::model::pattern_display_name(p.index),
+                        k + 1
+                    )
+                })
+            })
+            .collect();
+        if with_links.is_empty() {
+            ui.label(RichText::new("No patterns link to a saved kit.").color(theme::TEXT_MUTED));
+        } else {
+            ui.label(format!(
+                "{} patterns link to a saved kit:",
+                with_links.len()
+            ));
+            ui.horizontal_wrapped(|ui| {
+                for chip in &with_links {
+                    ui.label(
+                        RichText::new(chip)
+                            .color(theme::TEXT_SECONDARY)
+                            .size(theme::FONT_META),
+                    );
+                }
+            });
+        }
+    });
+}
+
+/// `2m ago`-style label for a unix timestamp.
+fn epoch_ago(unix_secs: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let secs = now.saturating_sub(unix_secs);
+    match secs {
+        0..=59 => "just now".to_owned(),
+        60..=3599 => format!("{}m ago", secs / 60),
+        3600..=86_399 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86_400),
+    }
 }
 
 /// The local-label editor (PRD §32): a rename that lives in Rytmdash only.

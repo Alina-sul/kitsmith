@@ -22,8 +22,11 @@ use crate::device::objects::accept_reply;
 use crate::midi::link::MidiLink;
 use crate::model::{slot_from_wire, ProjectModel, SampleSlotInfo};
 
-/// File name of the persisted clipboard inside the cache directory.
+/// File name of the persisted pattern clipboard inside the cache directory.
 const CLIPBOARD_FILE: &str = "pattern_clipboard.json";
+
+/// File name of the persisted kit clipboard inside the cache directory.
+const KIT_CLIPBOARD_FILE: &str = "kit_clipboard.json";
 
 /// A sample slot the captured objects reference, with its +Drive identity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -87,6 +90,201 @@ pub struct MaterializedPaste {
     /// Expected per-track sample slots after the write (read-back check).
     pub expected_kit_slots: Vec<Option<u8>>,
     pub pattern_index: usize,
+}
+
+/// A captured kit and its sample dependencies, portable across project loads.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KitClipboard {
+    pub captured_at_unix: u64,
+    /// Human hint for the UI, e.g. `Kit 02 DEUIL B`.
+    pub source_hint: String,
+    pub kit_index: usize,
+    pub kit_name: String,
+    pub kit_sysex: Vec<u8>,
+    /// Every sample slot referenced by the kit's 12 track Sounds.
+    pub samples: Vec<SampleDep>,
+}
+
+/// Preflight result for pasting a kit into the synced target project.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KitPastePreview {
+    pub slot_remap: BTreeMap<u8, u8>,
+    pub missing: Vec<SampleDep>,
+    /// Kit slot + its current name in the target project.
+    pub overwrite_kit: String,
+    /// Target patterns linked to the kit slot being replaced.
+    pub kit_used_by: Vec<String>,
+}
+
+/// Everything the Plan needs to execute and verify a kit paste.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializedKitPaste {
+    pub write: ObjectWrite,
+    pub kit_index: usize,
+    pub expected_kit_slots: Vec<Option<u8>>,
+}
+
+/// Captures one kit with a **fresh** device read; `model` supplies the
+/// +Drive identities of the sample slots its sounds reference.
+pub fn capture_kit(
+    link: &mut MidiLink,
+    model: &ProjectModel,
+    kit_index: usize,
+) -> Result<KitClipboard, String> {
+    let mut rytm = RytmProject::try_default().map_err(|e| e.to_string())?;
+    let kit_sysex = query_object(
+        link,
+        &mut rytm,
+        KitQuery::new(kit_index)
+            .and_then(|q| q.as_sysex())
+            .map_err(|e| e.to_string())?,
+        "kit",
+    )?;
+    let kit = rytm
+        .kits()
+        .get(kit_index)
+        .ok_or("kit missing after decode")?;
+    let kit_name = kit.name().to_owned();
+    let mut slots: BTreeSet<u8> = BTreeSet::new();
+    for sound in kit.sounds().iter().take(12) {
+        if let Some(slot) = slot_from_wire(sound.sample().slice_number()) {
+            slots.insert(slot);
+        }
+    }
+    Ok(KitClipboard {
+        captured_at_unix: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        source_hint: format!("Kit {:02} {}", kit_index + 1, kit_name.trim()),
+        kit_index,
+        kit_name,
+        kit_sysex,
+        samples: resolve_sample_deps(model, slots),
+    })
+}
+
+/// Builds the kit-paste preview against the synced target project (pure).
+pub fn plan_paste_kit(clip: &KitClipboard, target: &ProjectModel) -> KitPastePreview {
+    let mut slot_remap = BTreeMap::new();
+    let mut missing = Vec::new();
+    for dep in &clip.samples {
+        match match_sample(dep, &target.samples) {
+            Some(slot) => {
+                slot_remap.insert(dep.source_slot, slot);
+            }
+            None => missing.push(dep.clone()),
+        }
+    }
+    let overwrite_kit = target
+        .kits
+        .get(clip.kit_index)
+        .map(|k| {
+            format!(
+                "Kit {:02} {}",
+                clip.kit_index + 1,
+                crate::model::names::kit_display_name(&k.name, k.index).text()
+            )
+        })
+        .unwrap_or_else(|| format!("Kit {:02}", clip.kit_index + 1));
+    let kit_used_by = target
+        .patterns
+        .iter()
+        .filter(|p| p.kit_index == clip.kit_index)
+        .map(|p| crate::model::pattern_display_name(p.index))
+        .collect();
+    KitPastePreview {
+        slot_remap,
+        missing,
+        overwrite_kit,
+        kit_used_by,
+    }
+}
+
+/// Decodes the captured kit, rewrites its sample references to the target
+/// project's slots, and re-encodes it for writing (pure CPU).
+pub fn materialize_kit(
+    clip: &KitClipboard,
+    preview: &KitPastePreview,
+) -> Result<MaterializedKitPaste, String> {
+    let mut rytm = RytmProject::try_default().map_err(|e| e.to_string())?;
+    rytm.update_from_sysex_response(&clip.kit_sysex)
+        .map_err(|e| format!("captured kit no longer decodes: {e}"))?;
+    let kit = rytm
+        .kits_mut()
+        .get_mut(clip.kit_index)
+        .ok_or("captured kit missing after decode")?;
+    let mut expected_kit_slots = Vec::with_capacity(12);
+    for sound in kit.sounds_mut().iter_mut().take(12) {
+        let raw = sound.sample().slice_number();
+        match slot_from_wire(raw).and_then(|src| preview.slot_remap.get(&src).copied()) {
+            Some(slot) => {
+                sound
+                    .sample_mut()
+                    .set_slice_number(usize::from(slot))
+                    .map_err(|e| e.to_string())?;
+                expected_kit_slots.push(Some(slot));
+            }
+            None => {
+                if slot_from_wire(raw).is_some() {
+                    sound.sample_mut().unset_slice();
+                }
+                expected_kit_slots.push(None);
+            }
+        }
+    }
+    Ok(MaterializedKitPaste {
+        write: ObjectWrite {
+            label: format!("write kit {:02}", clip.kit_index + 1),
+            sysex: kit.as_sysex().map_err(|e| e.to_string())?,
+        },
+        kit_index: clip.kit_index,
+        expected_kit_slots,
+    })
+}
+
+/// Resolves a set of source slots to dependencies with +Drive identity.
+fn resolve_sample_deps(model: &ProjectModel, slots: BTreeSet<u8>) -> Vec<SampleDep> {
+    slots
+        .into_iter()
+        .map(|slot| {
+            model.samples.iter().find(|s| s.slot == slot).map_or_else(
+                || SampleDep {
+                    source_slot: slot,
+                    name: format!("slot {slot:03} (name unavailable)"),
+                    path: String::new(),
+                    size: 0,
+                    hash: 0,
+                },
+                |s| SampleDep {
+                    source_slot: slot,
+                    name: s.name.clone(),
+                    path: s.path.clone(),
+                    size: s.size,
+                    hash: s.hash,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Persists the kit clipboard.
+pub fn save_kit(clip: &KitClipboard) -> std::io::Result<()> {
+    let dir = crate::cache::default_dir();
+    std::fs::create_dir_all(&dir)?;
+    let json = serde_json::to_vec_pretty(clip).map_err(std::io::Error::other)?;
+    std::fs::write(dir.join(KIT_CLIPBOARD_FILE), json)
+}
+
+/// Loads the persisted kit clipboard, if any.
+pub fn load_kit() -> Option<KitClipboard> {
+    let bytes = std::fs::read(crate::cache::default_dir().join(KIT_CLIPBOARD_FILE)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Removes the persisted kit clipboard.
+pub fn clear_saved_kit() {
+    let _ = std::fs::remove_file(crate::cache::default_dir().join(KIT_CLIPBOARD_FILE));
 }
 
 /// Captures a pattern + its kit + Sound-locked pool sounds with **fresh**
@@ -174,27 +372,7 @@ pub fn capture(
         pool_sounds.insert(pool_index, sysex);
     }
 
-    let samples = slots
-        .into_iter()
-        .map(|slot| {
-            model.samples.iter().find(|s| s.slot == slot).map_or_else(
-                || SampleDep {
-                    source_slot: slot,
-                    name: format!("slot {slot:03} (name unavailable)"),
-                    path: String::new(),
-                    size: 0,
-                    hash: 0,
-                },
-                |s| SampleDep {
-                    source_slot: slot,
-                    name: s.name.clone(),
-                    path: s.path.clone(),
-                    size: s.size,
-                    hash: s.hash,
-                },
-            )
-        })
-        .collect();
+    let samples = resolve_sample_deps(model, slots);
 
     Ok(PatternClipboard {
         captured_at_unix: std::time::SystemTime::now()

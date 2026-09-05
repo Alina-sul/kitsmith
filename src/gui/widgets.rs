@@ -87,13 +87,14 @@ pub fn section_label(ui: &mut Ui, text: &str) {
     );
 }
 
-/// A full-width selectable list row. Returns true when clicked.
+/// A full-width selectable list row. Returns its response (check `.clicked()`;
+/// attach `.context_menu(...)` for right-click actions).
 pub fn list_row(
     ui: &mut Ui,
     selected: bool,
     min_height: f32,
     content: impl FnOnce(&mut Ui),
-) -> bool {
+) -> Response {
     let fill = if selected {
         theme::SURFACE_ELEVATED
     } else {
@@ -125,7 +126,7 @@ pub fn list_row(
             egui::StrokeKind::Inside,
         );
     }
-    response.clicked()
+    response
 }
 
 /// Header line for an inspector group.

@@ -5,20 +5,23 @@ use std::time::Instant;
 
 use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Stroke};
 
+use std::collections::HashMap;
+
 use crate::cache::{self, ProjectManifest};
 use crate::device::detect::DeviceState;
 use crate::device::objects::MissedObject;
+use crate::device::projfile::{self, RawProjectSnapshot};
 use crate::device::watcher::DeviceWatcher;
 use crate::gui::backup::BackupController;
 use crate::gui::execute::ExecutePanel;
 use crate::gui::import::ImportPanel;
 use crate::gui::sync::SyncController;
-use crate::gui::transfer_ctl::CaptureController;
+use crate::gui::transfer_ctl::{CaptureController, Captured};
 use crate::gui::views::activity::{ActivityEntry, ActivityKind};
 use crate::gui::{sidebar, theme, top_bar, views};
 use crate::localmeta::{self, LocalMeta};
 use crate::model::ProjectModel;
-use crate::transfer::{self, PatternClipboard};
+use crate::transfer::{self, KitClipboard, PatternClipboard};
 
 /// Top-level navigation destinations (PRD §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -92,6 +95,8 @@ pub struct UiState {
     pub alias_draft_slot: Option<u32>,
     /// The paste-preview modal for a cross-project pattern transfer.
     pub paste_modal_open: bool,
+    /// The paste-preview modal for a cross-project kit transfer.
+    pub kit_paste_modal_open: bool,
 }
 
 /// When the last sync finished and how complete it was.
@@ -112,6 +117,10 @@ pub struct RytmdashApp {
     pub(crate) manifest: ProjectManifest,
     pub(crate) capture: CaptureController,
     pub(crate) clipboard: Option<PatternClipboard>,
+    pub(crate) kit_clipboard: Option<KitClipboard>,
+    /// Parsed project snapshots from raw backups (`None` = unparseable),
+    /// loaded lazily per slot.
+    pub(crate) raw_snapshots: HashMap<u32, Option<RawProjectSnapshot>>,
     pub(crate) ui_state: UiState,
     pub(crate) last_sync: Option<SyncInfo>,
     /// Objects the last sync could not read (for Diagnostics).
@@ -135,6 +144,8 @@ impl RytmdashApp {
             manifest: cache::load_project_manifest(&cache::default_dir()),
             capture: CaptureController::default(),
             clipboard: transfer::load(),
+            kit_clipboard: transfer::load_kit(),
+            raw_snapshots: HashMap::new(),
             ui_state: UiState::default(),
             last_sync: None,
             sync_misses: Vec::new(),
@@ -166,6 +177,17 @@ impl RytmdashApp {
         if let Err(e) = localmeta::save(&self.local_meta) {
             self.toast(format!("Could not save local labels: {e}"));
         }
+    }
+
+    /// Ensures the parsed snapshot for a backed-up project slot is cached
+    /// (reads + parses the backup file on first access).
+    pub(crate) fn ensure_raw_snapshot(&mut self, slot: u32) {
+        if self.raw_snapshots.contains_key(&slot) {
+            return;
+        }
+        let snapshot = cache::load_project_backup(&cache::default_dir(), slot)
+            .and_then(|bytes| projfile::parse_raw_project(&bytes));
+        self.raw_snapshots.insert(slot, snapshot);
     }
 
     /// Pulls finished background work into app state.
@@ -219,6 +241,7 @@ impl RytmdashApp {
 
         if let Some((ok, failed)) = self.backup.take_finished() {
             self.manifest = cache::load_project_manifest(&cache::default_dir());
+            self.raw_snapshots.clear();
             let (kind, title) = if failed == 0 {
                 (
                     ActivityKind::Success,
@@ -236,7 +259,7 @@ impl RytmdashApp {
 
         if let Some(result) = self.capture.take_finished() {
             match result {
-                Ok(clip) => {
+                Ok(Captured::Pattern(clip)) => {
                     let hint = clip.source_hint.clone();
                     self.clipboard = Some(clip);
                     self.toast(format!("Captured {hint} for transfer"));
@@ -246,13 +269,19 @@ impl RytmdashApp {
                         None,
                     );
                 }
-                Err(e) => {
-                    self.toast(format!("Capture failed: {e}"));
+                Ok(Captured::Kit(clip)) => {
+                    let hint = clip.source_hint.clone();
+                    self.kit_clipboard = Some(clip);
+                    self.toast(format!("Captured {hint} for transfer"));
                     self.log_activity(
-                        ActivityKind::Error,
-                        format!("Pattern capture failed: {e}"),
+                        ActivityKind::Success,
+                        format!("Captured {hint} for cross-project transfer"),
                         None,
                     );
+                }
+                Err(e) => {
+                    self.toast(format!("Capture failed: {e}"));
+                    self.log_activity(ActivityKind::Error, format!("Capture failed: {e}"), None);
                 }
             }
         }

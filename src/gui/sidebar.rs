@@ -48,7 +48,8 @@ fn nav_item(app: &mut RytmdashApp, ui: &mut egui::Ui, nav: Nav, label: &str) {
         } else {
             theme::TEXT_SECONDARY
         }));
-    });
+    })
+    .clicked();
     if clicked {
         app.ui_state.nav = nav;
     }
@@ -131,7 +132,8 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                         ));
                     }
                 });
-            });
+            })
+            .clicked();
             if clicked {
                 select = Some(ProjectSelection::Slot(*id));
             }
@@ -217,7 +219,8 @@ fn active_project_row(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                 }
             });
         });
-    });
+    })
+    .clicked();
     if clicked {
         app.ui_state.project = ProjectSelection::Active;
     }

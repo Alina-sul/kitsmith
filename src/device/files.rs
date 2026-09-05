@@ -141,18 +141,20 @@ impl FileClient {
     }
 
     /// Downloads one data item (e.g. `/projects/2`) chunk by chunk.
-    /// Read-only on the device. `on_chunk` receives each received chunk and
-    /// the total byte count so far.
+    /// Read-only on the device. `compressed` asks the device to compress the
+    /// transfer (what Transfer does); `false` requests the raw payload.
+    /// `on_chunk` receives each received chunk and the total byte count.
     pub fn download_data(
         &mut self,
         link: &mut MidiLink,
         path: &str,
+        compressed: bool,
         mut on_chunk: impl FnMut(&DataChunk, usize),
     ) -> Option<DataDownload> {
         let mut body = vec![OP_DATA_READ_OPEN];
         push_path(&mut body, path);
         body.extend_from_slice(&DATA_CHUNK_BYTES.to_be_bytes());
-        body.push(1); // data items transfer compressed (spec: elektroid)
+        body.push(u8::from(compressed));
         let reply = self.transact(link, &body)?;
         let (jid, compressed) = parse_data_open(&reply)?;
 

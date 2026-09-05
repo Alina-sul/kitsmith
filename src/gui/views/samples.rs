@@ -182,7 +182,8 @@ fn slot_row(
                 }
             });
         });
-    });
+    })
+    .clicked();
     if clicked {
         *selected = (!is_selected).then_some(slot);
     }

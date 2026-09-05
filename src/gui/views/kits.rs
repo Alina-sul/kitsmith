@@ -16,74 +16,280 @@ use crate::model::{pattern_display_name, KitModel, ProjectModel};
 use super::SlotDrag;
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
-    let Some(model) = app.model.as_ref() else {
-        return;
-    };
-    let state = &mut app.ui_state.kits;
+    let ctx = ui.ctx().clone();
+    let connected = app.connected_in_port();
+    let can_capture = connected.is_some() && !app.capture.is_running();
+    let mut request_capture_kit: Option<usize> = None;
+    let mut open_kit_paste = false;
+    let mut clear_kit_clipboard = false;
     let mut pending = None;
 
-    let linked = model.linked_kit_indices();
-    // Keep a valid kit selected (first linked kit by default).
-    let selected_kit = state
-        .selected_kit
-        .filter(|k| model.kits.get(*k).is_some())
-        .or_else(|| linked.first().copied())
-        .unwrap_or(0);
-    state.selected_kit = Some(selected_kit);
+    {
+        let Some(model) = app.model.as_ref() else {
+            return;
+        };
+        let kit_clipboard = &app.kit_clipboard;
+        let state = &mut app.ui_state.kits;
 
-    egui::Panel::left("kit-list")
-        .default_size(theme::KIT_LIST_WIDTH)
-        .resizable(false)
-        .frame(Frame::new().inner_margin(Margin::symmetric(0, 4)))
-        .show(ui, |ui| {
-            kit_list(ui, model, &linked, state);
-        });
+        let linked = model.linked_kit_indices();
+        // Keep a valid kit selected (first linked kit by default).
+        let selected_kit = state
+            .selected_kit
+            .filter(|k| model.kits.get(*k).is_some())
+            .or_else(|| linked.first().copied())
+            .unwrap_or(0);
+        state.selected_kit = Some(selected_kit);
 
-    if state.selected_track.is_some() || !state.rail_hidden {
-        egui::Panel::right("kit-inspector")
-            .default_size(theme::INSPECTOR_WIDTH)
-            .resizable(true)
-            .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
+        egui::Panel::left("kit-list")
+            .default_size(theme::KIT_LIST_WIDTH)
+            .resizable(false)
+            .frame(Frame::new().inner_margin(Margin::symmetric(0, 4)))
             .show(ui, |ui| {
-                if state.selected_track.is_some() {
-                    track_inspector(ui, model, state);
-                } else {
-                    sample_rail(ui, model, state);
+                kit_list(
+                    ui,
+                    model,
+                    &linked,
+                    state,
+                    can_capture,
+                    &mut request_capture_kit,
+                );
+            });
+
+        if state.selected_track.is_some() || !state.rail_hidden {
+            egui::Panel::right("kit-inspector")
+                .default_size(theme::INSPECTOR_WIDTH)
+                .resizable(true)
+                .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
+                .show(ui, |ui| {
+                    if state.selected_track.is_some() {
+                        track_inspector(ui, model, state);
+                    } else {
+                        sample_rail(ui, model, state);
+                    }
+                });
+        }
+
+        egui::CentralPanel::default()
+            .frame(Frame::new().inner_margin(Margin::symmetric(12, 4)))
+            .show(ui, |ui| {
+                if let Some(clip) = kit_clipboard {
+                    kit_clipboard_banner(ui, clip, &mut open_kit_paste, &mut clear_kit_clipboard);
+                    ui.add_space(theme::GAP_S);
+                }
+                if let Some(kit) = model.kits.get(selected_kit) {
+                    kit_header(ui, model, kit);
+                    ui.add_space(theme::GAP_S);
+                    mode_switch(ui, state);
+                    ui.add_space(theme::GAP_M);
+                    egui::ScrollArea::both()
+                        .id_salt("pad-grid-scroll")
+                        .show(ui, |ui| {
+                            if let Some(assign) = pad_grid(ui, model, kit, state) {
+                                pending = Some(assign);
+                            }
+                        });
                 }
             });
     }
 
-    egui::CentralPanel::default()
-        .frame(Frame::new().inner_margin(Margin::symmetric(12, 4)))
-        .show(ui, |ui| {
-            if let Some(kit) = model.kits.get(selected_kit) {
-                kit_header(ui, model, kit);
-                ui.add_space(theme::GAP_S);
-                mode_switch(ui, state);
-                ui.add_space(theme::GAP_M);
-                egui::ScrollArea::both()
-                    .id_salt("pad-grid-scroll")
-                    .show(ui, |ui| {
-                        if let Some(assign) = pad_grid(ui, model, kit, state) {
-                            pending = Some(assign);
-                        }
-                    });
-            }
-        });
-
     if pending.is_some() {
         app.execute.pending = pending;
+    }
+    if let Some(index) = request_capture_kit {
+        if let (Some(port), Some(model)) = (connected.clone(), app.model.clone()) {
+            let repaint = ctx.clone();
+            app.capture.start(
+                port,
+                model,
+                crate::gui::transfer_ctl::CaptureJob::Kit(index),
+                move || repaint.request_repaint(),
+            );
+        }
+    }
+    if open_kit_paste {
+        app.ui_state.kit_paste_modal_open = true;
+    }
+    if clear_kit_clipboard {
+        app.kit_clipboard = None;
+        crate::transfer::clear_saved_kit();
+    }
+    kit_paste_modal(app, &ctx);
+}
+
+/// The kit transfer clipboard banner.
+fn kit_clipboard_banner(
+    ui: &mut egui::Ui,
+    clip: &crate::transfer::KitClipboard,
+    open_paste: &mut bool,
+    clear: &mut bool,
+) {
+    Frame::new()
+        .fill(theme::SURFACE)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                widgets::badge(ui, "KIT CLIPBOARD", theme::SAMPLE_PURPLE);
+                ui.label(
+                    RichText::new(&clip.source_hint)
+                        .color(theme::TEXT_PRIMARY)
+                        .strong(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Clear").clicked() {
+                        *clear = true;
+                    }
+                    if ui.button("Paste into this project…").clicked() {
+                        *open_paste = true;
+                    }
+                });
+            });
+            ui.label(
+                RichText::new(
+                    "To transfer: load the target project on the device, press Sync, then paste.",
+                )
+                .color(theme::TEXT_MUTED)
+                .size(theme::FONT_META),
+            );
+        });
+}
+
+/// The kit paste-plan modal (PRD §30–§31, kit-only slice).
+fn kit_paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
+    if !app.ui_state.kit_paste_modal_open {
+        return;
+    }
+    let (Some(clip), Some(model)) = (&app.kit_clipboard, app.model.as_ref()) else {
+        app.ui_state.kit_paste_modal_open = false;
+        return;
+    };
+    let preview = crate::transfer::plan_paste_kit(clip, model);
+    let connected = app.connected_in_port();
+    let mut close = false;
+    let mut confirm = false;
+    let mut launch: Option<crate::ops::Plan> = None;
+
+    egui::Window::new(format!(
+        "Copy kit {:02} into this project?",
+        clip.kit_index + 1
+    ))
+    .collapsible(false)
+    .resizable(false)
+    .show(ctx, |ui| {
+        ui.label(
+            RichText::new(
+                "Pasting writes into whatever project is ACTIVE on the device. Make sure \
+                     the target project is loaded and synced.",
+            )
+            .color(theme::WARNING),
+        );
+        ui.add_space(theme::GAP_S);
+        ui.label(format!(
+            "{} will be replaced in this project.",
+            preview.overwrite_kit
+        ));
+        if !preview.kit_used_by.is_empty() {
+            ui.label(
+                RichText::new(format!(
+                    "Warning: {} use this kit slot — replacing it changes them too.",
+                    preview.kit_used_by.join(" · ")
+                ))
+                .color(theme::WARNING),
+            );
+        }
+        ui.add_space(theme::GAP_S);
+        widgets::section_label(ui, "SAMPLE MAPPING");
+        if preview.slot_remap.is_empty() && preview.missing.is_empty() {
+            ui.label(RichText::new("No samples referenced.").color(theme::TEXT_MUTED));
+        }
+        for (src, dst) in &preview.slot_remap {
+            let name = clip
+                .samples
+                .iter()
+                .find(|d| d.source_slot == *src)
+                .map_or("", |d| d.name.as_str());
+            ui.label(format!(
+                "{name} · slot {src:02} → slot {dst:02} (already loaded here)"
+            ));
+        }
+        for dep in &preview.missing {
+            ui.label(
+                RichText::new(format!(
+                    "{} · not loaded in this project — reference will be cleared",
+                    dep.name
+                ))
+                .color(theme::DANGER),
+            );
+        }
+        ui.add_space(theme::GAP_S);
+        ui.label(
+            RichText::new("A backup of this project is pulled before anything is written.")
+                .color(theme::TEXT_SECONDARY)
+                .size(theme::FONT_META),
+        );
+        ui.add_space(theme::GAP_S);
+        ui.horizontal(|ui| {
+            let button = egui::Button::new(format!(
+                "Copy kit {:02} into this project",
+                clip.kit_index + 1
+            ));
+            if ui
+                .add_enabled(connected.is_some(), button)
+                .on_disabled_hover_text("Connect the Rytm first")
+                .clicked()
+            {
+                confirm = true;
+            }
+            if ui.button("Cancel").clicked() {
+                close = true;
+            }
+        });
+    });
+
+    if confirm {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::transfer::materialize_kit(clip, &preview)
+        }))
+        .unwrap_or_else(|_| Err("internal error while re-encoding the captured kit".into()));
+        match result {
+            Ok(paste) => launch = Some(crate::ops::Plan::paste_kit(&paste)),
+            Err(e) => {
+                app.ui_state.kit_paste_modal_open = false;
+                app.toast(format!("Paste failed before writing anything: {e}"));
+                return;
+            }
+        }
+    }
+
+    if let (Some(plan), Some(port)) = (launch, connected) {
+        app.ui_state.kit_paste_modal_open = false;
+        app.execute.launch(
+            plan,
+            port,
+            ctx.clone(),
+            Some(
+                "Now save the project on the device (PROJECT → SAVE) to persist the copy."
+                    .to_owned(),
+            ),
+        );
+    } else if close {
+        app.ui_state.kit_paste_modal_open = false;
     }
 }
 
 // ---- Kit list -------------------------------------------------------------
 
 /// Kit list pane with In use / All / Unused filters and search (PRD §11).
+/// Right-click a kit for transfer actions (PRD §36).
 fn kit_list(
     ui: &mut egui::Ui,
     model: &ProjectModel,
     linked: &[usize],
     state: &mut crate::gui::app::KitsState,
+    can_capture: bool,
+    request_capture: &mut Option<usize>,
 ) {
     widgets::section_label(ui, "KITS");
     ui.add_space(4.0);
@@ -126,7 +332,7 @@ fn kit_list(
             for kit in rows {
                 let selected = state.selected_kit == Some(kit.index);
                 let patterns = kit_pattern_names(model, kit.index);
-                let clicked = widgets::list_row(ui, selected, theme::KIT_ROW_HEIGHT, |ui| {
+                let row = widgets::list_row(ui, selected, theme::KIT_ROW_HEIGHT, |ui| {
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
                             ui.label(
@@ -154,7 +360,21 @@ fn kit_list(
                         }
                     });
                 });
-                if clicked {
+                row.context_menu(|ui| {
+                    if ui
+                        .add_enabled(can_capture, egui::Button::new("Copy kit for transfer"))
+                        .on_hover_text(
+                            "Fresh-reads this kit into the transfer clipboard. Then load \
+                             another project on the device, sync, and paste.",
+                        )
+                        .on_disabled_hover_text("Connect the Rytm first")
+                        .clicked()
+                    {
+                        *request_capture = Some(kit.index);
+                        ui.close();
+                    }
+                });
+                if row.clicked() {
                     state.selected_kit = Some(kit.index);
                     state.selected_track = None;
                 }
