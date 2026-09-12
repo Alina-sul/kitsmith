@@ -27,6 +27,7 @@ skill in `.claude/skills/` before trusting any write path.
 | `protocol-ecosystem.md` | The two sysex protocols, prior art (Transfer, elektroid, libanalogrytm, rytm-rs), licenses, risks. |
 | `midi-control-map.md` | Complete MIDI note/CC/NRPN control surface (manual Appendix C) — the basis for playing pads/kits and live parameter control from the app. |
 | `device-family-landscape.md` | How unique the Rytm is vs the rest of the Elektron family; which rytmdash layers would port to other devices, and the AR-only decision. |
+| `legal-shipping.md` | Legal posture for shipping publicly: why protocol interop is fine, the trademark/name risk, disclaimers, license hygiene, release gates. |
 | `../hardware-verification.md` | What is *verified on real hardware* vs assumed — the write-gate ledger. |
 | `../management-matrix.md` | Every device entity × every management operation: what's possible, over which protocol, and its status. |
 
