@@ -4,11 +4,11 @@
 
 use eframe::egui::{self, CollapsingHeader, RichText, ScrollArea};
 
-use crate::gui::app::{Nav, ProjectSelection, RytmdashApp};
+use crate::gui::app::{KitsmithApp, Nav, ProjectSelection};
 use crate::gui::{theme, widgets};
 use crate::model::names;
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     nav_item(app, ui, Nav::Projects, "Projects");
     nav_item(app, ui, Nav::Drive, "+Drive");
     let import_label = if !app.import.is_empty() {
@@ -40,7 +40,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     });
 }
 
-fn nav_item(app: &mut RytmdashApp, ui: &mut egui::Ui, nav: Nav, label: &str) {
+fn nav_item(app: &mut KitsmithApp, ui: &mut egui::Ui, nav: Nav, label: &str) {
     let selected = app.ui_state.nav == nav;
     let clicked = widgets::list_row(ui, selected, 34.0, |ui| {
         ui.label(RichText::new(label).color(if selected {
@@ -64,7 +64,7 @@ pub(crate) struct ProjectDrag {
 /// The project browser (PRD §7.2–7.4): the synced active project pinned,
 /// then all 128 +Drive slots — used ones as draggable rows, empty ones as
 /// drop targets for project copies.
-fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     ui.add(
         egui::TextEdit::singleline(&mut app.ui_state.project_search)
             .hint_text("Search projects…")
@@ -185,14 +185,14 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 }
 
 /// Smallest project slot that holds no project.
-fn first_empty_slot(app: &RytmdashApp) -> Option<u32> {
+fn first_empty_slot(app: &KitsmithApp) -> Option<u32> {
     let model = app.model.as_ref()?;
     (1..=128u32).find(|id| !model.projects.iter().any(|p| p.id == *id))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn project_row(
-    app: &RytmdashApp,
+    app: &KitsmithApp,
     ui: &mut egui::Ui,
     id: u32,
     name: &str,
@@ -301,7 +301,7 @@ fn empty_slot_row(ui: &mut egui::Ui, id: u32) -> Option<u32> {
 
 /// "Back up all projects" — downloads every listed project payload into the
 /// local cache (read-only on the device).
-fn backup_controls(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn backup_controls(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     use crate::gui::backup::BackupStatus;
     match app.backup.status() {
         BackupStatus::Running {
@@ -352,7 +352,7 @@ fn backup_controls(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 }
 
 /// The pinned row for the synced active project.
-fn active_project_row(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn active_project_row(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let selected = app.ui_state.project == ProjectSelection::Active;
     let has_model = app.model.is_some();
     let clicked = widgets::list_row(ui, selected, theme::LIST_ROW_HEIGHT, |ui| {

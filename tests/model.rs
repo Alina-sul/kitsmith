@@ -3,8 +3,8 @@
 //! Built against `RytmProject::try_default()` — the device defaults rytm-rs
 //! ships — so they run without hardware.
 
+use kitsmith::model::{pattern_display_name, ProjectModel, TRACK_COUNT};
 use rytm_rs::RytmProject;
-use rytmdash::model::{pattern_display_name, ProjectModel, TRACK_COUNT};
 
 fn default_model() -> (RytmProject, ProjectModel) {
     let rytm = RytmProject::try_default().expect("default project");

@@ -4,18 +4,18 @@
 
 use eframe::egui::{self, RichText};
 
-use crate::gui::app::RytmdashApp;
+use crate::gui::app::KitsmithApp;
 use crate::gui::fileops::FileOp;
 use crate::gui::theme;
 use crate::model::names;
 
-pub fn show(app: &mut RytmdashApp, ctx: &egui::Context) {
+pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
     rename_modal(app, ctx);
     copy_modal(app, ctx);
     load_sample_modal(app, ctx);
 }
 
-fn start_op(app: &mut RytmdashApp, ctx: &egui::Context, op: FileOp) {
+fn start_op(app: &mut KitsmithApp, ctx: &egui::Context, op: FileOp) {
     let Some(port) = app.connected_in_port() else {
         app.toast("Connect the Rytm first".to_owned());
         return;
@@ -25,7 +25,7 @@ fn start_op(app: &mut RytmdashApp, ctx: &egui::Context, op: FileOp) {
         .start(port, op, move || repaint.request_repaint());
 }
 
-fn rename_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
+fn rename_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
     let Some(slot) = app.ui_state.rename_modal_slot else {
         return;
     };
@@ -89,7 +89,7 @@ fn rename_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
     }
 }
 
-fn copy_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
+fn copy_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
     let Some((src, mut dst)) = app.ui_state.copy_modal else {
         return;
     };
@@ -159,7 +159,7 @@ fn copy_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
     }
 }
 
-fn load_sample_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
+fn load_sample_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
     let Some(path) = app.ui_state.load_sample_modal.clone() else {
         return;
     };

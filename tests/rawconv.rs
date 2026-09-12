@@ -1,9 +1,9 @@
 //! Raw-kit → sysex conversion: what `capture_kit_from_backup` relies on.
 //! Round-trips through libanalogrytm's own decoder to prove byte fidelity.
 
+use kitsmith::device::rawconv::{kit_raw_to_sysex, KIT_RAW_LEN};
 use rytm_rs::prelude::*;
 use rytm_rs::RytmProject;
-use rytmdash::device::rawconv::{kit_raw_to_sysex, KIT_RAW_LEN};
 
 #[test]
 fn kit_survives_syx_to_raw_to_syx() {

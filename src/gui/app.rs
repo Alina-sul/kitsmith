@@ -123,7 +123,7 @@ pub struct SyncInfo {
     pub missed: usize,
 }
 
-pub struct RytmdashApp {
+pub struct KitsmithApp {
     pub(crate) watcher: DeviceWatcher,
     pub(crate) sync: SyncController,
     pub(crate) import: ImportPanel,
@@ -153,7 +153,7 @@ pub struct RytmdashApp {
     toasts: Vec<(String, Instant)>,
 }
 
-impl RytmdashApp {
+impl KitsmithApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
@@ -571,7 +571,7 @@ impl RytmdashApp {
     }
 }
 
-impl eframe::App for RytmdashApp {
+impl eframe::App for KitsmithApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.absorb_events(&ctx);

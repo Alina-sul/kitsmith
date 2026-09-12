@@ -3,11 +3,11 @@
 
 use std::collections::BTreeMap;
 
+use kitsmith::model::{ProjectModel, SampleSlotInfo};
+use kitsmith::ops::{execute, OpStep, Plan};
+use kitsmith::transfer::{materialize, plan_paste, PatternClipboard, SampleDep};
 use rytm_rs::prelude::*;
 use rytm_rs::RytmProject;
-use rytmdash::model::{ProjectModel, SampleSlotInfo};
-use rytmdash::ops::{execute, OpStep, Plan};
-use rytmdash::transfer::{materialize, plan_paste, PatternClipboard, SampleDep};
 
 /// Builds a clipboard from locally-encoded default objects:
 /// pattern 5 (kit link 5, sample plock slot 42, Sound Lock on pool 3),
@@ -173,7 +173,7 @@ fn clipboard_serde_round_trips() {
 
 #[test]
 fn kit_transfer_remaps_and_round_trips() {
-    use rytmdash::transfer::{materialize_kit, plan_paste_kit, KitClipboard};
+    use kitsmith::transfer::{materialize_kit, plan_paste_kit, KitClipboard};
 
     let mut rytm = RytmProject::try_default().expect("default project");
     rytm.kits_mut()[9].sounds_mut()[0]
@@ -230,7 +230,7 @@ fn kit_transfer_remaps_and_round_trips() {
 /// verification step, matching read-back must succeed.
 #[test]
 fn paste_execution_verifies_via_read_back() {
-    use rytmdash::ops::{DeviceBackend, OpError};
+    use kitsmith::ops::{DeviceBackend, OpError};
     use std::path::PathBuf;
 
     struct Mock {

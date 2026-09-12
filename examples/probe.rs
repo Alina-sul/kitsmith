@@ -6,10 +6,10 @@
 
 use std::time::Instant;
 
-use rytmdash::device::detect::is_rytm_port;
-use rytmdash::device::files::{crc32, DataChunk, FileClient, PROJECTS_PATH};
-use rytmdash::midi::link::MidiLink;
-use rytmdash::midi::ports;
+use kitsmith::device::detect::is_rytm_port;
+use kitsmith::device::files::{crc32, DataChunk, FileClient, PROJECTS_PATH};
+use kitsmith::midi::link::MidiLink;
+use kitsmith::midi::ports;
 
 fn main() {
     let snapshot = ports::snapshot();

@@ -3,11 +3,11 @@
 
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, Stroke};
 
-use crate::gui::app::RytmdashApp;
+use crate::gui::app::KitsmithApp;
 use crate::gui::{theme, widgets};
 use crate::model::SAMPLE_SLOT_COUNT;
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let model = match app.ui_state.project {
         crate::gui::app::ProjectSelection::Active => app.model.as_ref(),
         crate::gui::app::ProjectSelection::Slot(id) => {

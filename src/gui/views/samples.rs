@@ -4,12 +4,12 @@
 
 use eframe::egui::{self, Frame, Id, Margin, RichText, ScrollArea};
 
-use crate::gui::app::{ProjectTab, RytmdashApp};
+use crate::gui::app::{KitsmithApp, ProjectTab};
 use crate::gui::{theme, widgets};
 use crate::model::names::{self, ResolvedName};
 use crate::model::{pattern_display_name, ProjectModel, SAMPLE_SLOT_COUNT};
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let model = match app.ui_state.project {
         crate::gui::app::ProjectSelection::Active => app.model.as_ref(),
         crate::gui::app::ProjectSelection::Slot(id) => {

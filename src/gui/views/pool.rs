@@ -4,12 +4,12 @@
 
 use eframe::egui::{self, RichText, ScrollArea};
 
-use crate::gui::app::RytmdashApp;
+use crate::gui::app::KitsmithApp;
 use crate::gui::{theme, widgets};
 use crate::model::names::{self, ResolvedName};
 use crate::model::pattern_display_name;
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     if app.is_browsing_snapshot() {
         ui.label(
             RichText::new(

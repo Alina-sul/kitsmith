@@ -3,12 +3,12 @@
 
 use eframe::egui::{self, RichText};
 
-use crate::gui::app::{ago, page_title, ProjectSelection, ProjectTab, RytmdashApp};
+use crate::gui::app::{ago, page_title, KitsmithApp, ProjectSelection, ProjectTab};
 use crate::gui::views::{kits, overview, patterns, pool, samples};
 use crate::gui::{theme, widgets};
 use crate::model::names;
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     match app.ui_state.project {
         ProjectSelection::Active => active_project(app, ui),
         ProjectSelection::Slot(id) => unindexed_project(app, ui, id),
@@ -18,7 +18,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 /// A +Drive project slot: when its raw backup exists, the **full dashboard**
 /// (kits / samples / patterns tabs) rendered read-only from the decoded
 /// snapshot; otherwise the label editor, backup state, and an index button.
-fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
+fn unindexed_project(app: &mut KitsmithApp, ui: &mut egui::Ui, id: u32) {
     app.ensure_raw_snapshot(id);
     app.ensure_raw_model(id);
     let native_name = app
@@ -190,11 +190,11 @@ fn epoch_ago(unix_secs: u64) -> String {
     }
 }
 
-/// The local-label editor (PRD §32): a rename that lives in Rytmdash only.
+/// The local-label editor (PRD §32): a rename that lives in Kitsmith only.
 /// No spec'd protocol operation renames a +Drive project natively, and the
 /// UI says so instead of pretending to write the device.
 fn alias_editor(
-    app: &mut RytmdashApp,
+    app: &mut KitsmithApp,
     ui: &mut egui::Ui,
     id: u32,
     native_name: &str,
@@ -206,10 +206,10 @@ fn alias_editor(
         app.ui_state.alias_draft_slot = Some(id);
     }
 
-    widgets::inspector_group(ui, "RYTMDASH LABEL (LOCAL ONLY)", |ui| {
+    widgets::inspector_group(ui, "KITSMITH LABEL (LOCAL ONLY)", |ui| {
         ui.label(
             RichText::new(
-                "Shown instead of the native name inside Rytmdash. Nothing is written to the \
+                "Shown instead of the native name inside Kitsmith. Nothing is written to the \
                  device — no verified protocol operation renames a project natively yet.",
             )
             .color(theme::TEXT_SECONDARY)
@@ -248,7 +248,7 @@ fn alias_editor(
     });
 }
 
-fn active_project(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn active_project(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     header(app, ui);
     ui.add_space(theme::GAP_S);
 
@@ -270,7 +270,7 @@ fn active_project(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 }
 
 /// Project header (PRD §8): name, live/cached/partial state, sync timestamp.
-fn header(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn header(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         // The device never reports which project is loaded; when the synced
         // contents match one of the local backups, surface that clearly as a
@@ -338,7 +338,7 @@ fn header(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 }
 
 /// Stable tab row under the header (PRD §9).
-fn tab_row(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn tab_row(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         for (tab, label) in [
             (ProjectTab::Kits, "Kits"),
@@ -356,7 +356,7 @@ fn tab_row(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     });
 }
 
-fn empty_state(app: &RytmdashApp, ui: &mut egui::Ui) {
+fn empty_state(app: &KitsmithApp, ui: &mut egui::Ui) {
     let connected = app.connected_in_port().is_some();
     ui.add_space(48.0);
     ui.vertical_centered(|ui| {

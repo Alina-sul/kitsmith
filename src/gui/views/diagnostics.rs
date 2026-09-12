@@ -127,6 +127,20 @@ pub fn show(
         widgets::inspector_group(ui, "MIDI OUTPUTS", |ui| {
             port_list(ui, &snapshot.ports.outputs);
         });
+
+        widgets::inspector_group(ui, "ABOUT", |ui| {
+            widgets::detail_line(
+                ui,
+                crate::config::APP_NAME,
+                concat!("v", env!("CARGO_PKG_VERSION")),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(crate::config::LEGAL_DISCLAIMER)
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+            );
+        });
     });
 }
 

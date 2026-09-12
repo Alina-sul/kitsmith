@@ -1,4 +1,4 @@
-# RYTMDASH — Product, UX and Architecture PRD v2
+# KITSMITH — Product, UX and Architecture PRD v2
 
 **Status:** Product direction + implementation specification  
 **Date:** 2026-09-05  
@@ -11,7 +11,7 @@
 
 ## 0. Executive mandate
 
-Rytmdash should become the place where a user manages an Elektron device instead of mentally translating slot numbers, hidden references, project boundaries, and multiple Elektron utilities.
+Kitsmith should become the place where a user manages an Elektron device instead of mentally translating slot numbers, hidden references, project boundaries, and multiple Elektron utilities.
 
 The product is **not** a software clone of the hardware UI. It should preserve the hardware's useful mental model — especially the Analog Rytm's 12-pad layout — while making the device's hidden data relationships visible, searchable, transferable, and safe to edit.
 
@@ -20,7 +20,7 @@ The product must optimize for this real workflow:
 1. The hardware is physically next to the computer.
 2. The user wants to understand what is in the device at a glance.
 3. The user wants to move between projects, kits, sounds and samples without remembering slot numbers.
-4. The user wants to drag an item to where it should go and let Rytmdash calculate the reference bookkeeping.
+4. The user wants to drag an item to where it should go and let Kitsmith calculate the reference bookkeeping.
 5. The user wants batch operations for samples and naming.
 6. The user must never be surprised by a destructive write.
 
@@ -93,20 +93,20 @@ If a sample is assigned, show a sample pill. If no sample is assigned, either sh
 
 ### 2.5 Names and fallbacks are confusing
 
-The app currently leaks states such as generic sound names and unresolved sample names into the main view. Rytmdash must distinguish:
+The app currently leaks states such as generic sound names and unresolved sample names into the main view. Kitsmith must distinguish:
 
 - a real native device name,
 - an intentionally unnamed object,
 - a name that exists but has not been resolved because a protocol phase failed,
-- a local Rytmdash alias.
+- a local Kitsmith alias.
 
 These are not the same state and must not share the same presentation.
 
 ### 2.6 The light presentation conflicts with the intended tool
 
-The current screenshot is light, low-contrast and sparse even though the intended product direction is a dark hardware-adjacent utility. Theme behavior must be controlled by Rytmdash rather than relying on an implicit egui/system default.
+The current screenshot is light, low-contrast and sparse even though the intended product direction is a dark hardware-adjacent utility. Theme behavior must be controlled by Kitsmith rather than relying on an implicit egui/system default.
 
-**Required change:** Rytmdash dark theme is the default and is explicitly applied on startup. Light theme may exist as an option later, but it must not be the accidental default.
+**Required change:** Kitsmith dark theme is the default and is explicitly applied on startup. Light theme may exist as an option later, but it must not be the accidental default.
 
 ### 2.7 The screen has too much empty canvas and too little useful structure
 
@@ -160,7 +160,7 @@ A pattern links to a kit. More than one pattern can link to the same kit, so edi
 
 There are 12 Scenes per kit, mapped to the 12 pads. A Scene applies fixed parameter values. Only one Scene can be active at a time. The hardware uses blue to communicate Scene mode.
 
-The manual documents a **48-parameter-lock total budget across the 12 Scenes in a kit**. This is valuable information to visualize in Rytmdash.
+The manual documents a **48-parameter-lock total budget across the 12 Scenes in a kit**. This is valuable information to visualize in Kitsmith.
 
 ### 3.5 Performance structure
 
@@ -178,7 +178,7 @@ This matters because a Sound can reference a sample. Therefore, a robust “what
 
 ### 3.7 Useful hardware-native management operations
 
-The device itself conceptually supports operations that Rytmdash can make far easier:
+The device itself conceptually supports operations that Kitsmith can make far easier:
 
 Projects:
 
@@ -225,7 +225,7 @@ Do not copy the hardware's menu limitations into the desktop application.
 
 ### P3 — Drag-and-drop should express user intent, not protocol mechanics
 
-The user drags `Crash` onto `BD`. Rytmdash decides whether that means:
+The user drags `Crash` onto `BD`. Kitsmith decides whether that means:
 
 - reuse an already-loaded project sample slot,
 - allocate a new project sample slot,
@@ -246,7 +246,7 @@ Kits, projects, Sound Pool entries and sample slots are slot-based. If a destina
 
 ### P6 — Separate selection from device activation
 
-Viewing Project 42 in Rytmdash is not the same as loading Project 42 on the hardware. The UI must always distinguish:
+Viewing Project 42 in Kitsmith is not the same as loading Project 42 on the hardware. The UI must always distinguish:
 
 - selected in the app,
 - currently active on the device,
@@ -259,7 +259,7 @@ If names or objects cannot be read, the app should stay usable and visibly mark 
 
 ### P8 — Every destructive action is reversible in practice or clearly not reversible
 
-Mutating plans must use the existing backup-first framework. Where a true automatic rollback is not available, the confirmation must say so. Never present “Undo” unless Rytmdash can actually guarantee an inverse write.
+Mutating plans must use the existing backup-first framework. Where a true automatic rollback is not available, the confirmation must say so. Never present “Undo” unless Kitsmith can actually guarantee an inverse write.
 
 ### P9 — Keep the main view musical, keep protocol detail in Diagnostics
 
@@ -304,7 +304,7 @@ At normal desktop widths the user should be able to keep the project list visibl
 
 ### Left section
 
-- `rytmdash` wordmark.
+- `kitsmith` wordmark.
 - Connected device pill:
   - green status dot,
   - `Analog Rytm MKII`,
@@ -468,7 +468,7 @@ Never use `Open project` to mean `Load on hardware`.
 
 Use:
 
-- `View in Rytmdash`
+- `View in Kitsmith`
 - `Load on device`
 
 as separate concepts.
@@ -791,7 +791,7 @@ Use **blue** as the mode accent because that matches the hardware.
 Each of the 12 cards shows:
 
 - `Scene 1` … `Scene 12`,
-- optional local Rytmdash alias, e.g. `Breakdown`,
+- optional local Kitsmith alias, e.g. `Breakdown`,
 - `N locks`,
 - compact affected-track badges such as `BD · OH · FX`.
 
@@ -936,7 +936,7 @@ Purple remains the sample semantic color, but rows should not all be purple. Use
 
 This is a critical product requirement.
 
-Rytmdash must have two distinct terms:
+Kitsmith must have two distinct terms:
 
 - **No kit-track uses** — the current kit-oriented graph found no direct kit track references.
 - **Safe to unload** — the full dependency engine found no references including Sound Locks / Sound Pool paths that can use the sample.
@@ -1020,7 +1020,7 @@ The current bottom tray is suitable for a proof of concept but not for batch wor
 
 ### 24.1 Entry
 
-Dropping one or more audio files anywhere on Rytmdash should:
+Dropping one or more audio files anywhere on Kitsmith should:
 
 - add them to the Import queue,
 - show a compact toast `4 files added to Import`,
@@ -1077,7 +1077,7 @@ A lightweight sample-preparation editor can be added after reliable upload/file 
 - rename,
 - batch export/upload.
 
-This should remain intentionally small. Rytmdash should not become a DAW.
+This should remain intentionally small. Kitsmith should not become a DAW.
 
 ---
 
@@ -1156,7 +1156,7 @@ Pattern-to-kit relinking, pattern copy and sequence editing are explicitly postp
 
 ## 27. Cross-project indexing prerequisite
 
-The headline product cannot exist until Rytmdash can inspect non-active projects without manually loading each one on the device.
+The headline product cannot exist until Kitsmith can inspect non-active projects without manually loading each one on the device.
 
 Required backend milestone:
 
@@ -1225,7 +1225,7 @@ Show:
 `Target: Project 017 · will use slot 22`  
 `+Drive file already exists — no file duplicate`
 
-This is the type of bookkeeping Rytmdash should remove from the user's brain.
+This is the type of bookkeeping Kitsmith should remove from the user's brain.
 
 ---
 
@@ -1326,7 +1326,7 @@ Never hide conflict resolution inside a tooltip.
 
 ## 32. Native names vs local aliases
 
-Rytmdash should support two naming layers:
+Kitsmith should support two naming layers:
 
 ### Native device name
 
@@ -1340,7 +1340,7 @@ Examples:
 - sample file name,
 - Sound library name.
 
-### Rytmdash local alias
+### Kitsmith local alias
 
 A label that improves organization but is not necessarily representable on the device.
 
@@ -1356,7 +1356,7 @@ The UI must visibly distinguish an alias from a native rename when editing.
 
 Example field label:
 
-`Rytmdash label (local only)`
+`Kitsmith label (local only)`
 
 ### Never lie about writes
 
@@ -1562,7 +1562,7 @@ This is more useful than a raw error string.
 
 ## 39. Theme
 
-Rytmdash should use an explicit app-owned theme.
+Kitsmith should use an explicit app-owned theme.
 
 ### Default: Dark
 
@@ -1986,7 +1986,7 @@ No new risky write feature starts until its dependency is marked verified.
 
 - No visible `synth` chip anywhere.
 - No primary screen text smaller than ~12 px equivalent.
-- App launches dark regardless of macOS appearance unless user explicitly selected another Rytmdash theme.
+- App launches dark regardless of macOS appearance unless user explicitly selected another Kitsmith theme.
 - Device status and Sync are understandable without hover.
 - Raw MIDI port names are not primary navigation.
 
@@ -2106,7 +2106,7 @@ No new risky write feature starts until its dependency is marked verified.
 
 ## WP7 — +Drive browser read UX
 
-**Goal:** browse global samples from Rytmdash.
+**Goal:** browse global samples from Kitsmith.
 
 ### Scope
 
@@ -2148,7 +2148,7 @@ No new risky write feature starts until its dependency is marked verified.
 
 ## WP9 — File-protocol write slice
 
-**Goal:** implement the missing operations that make Rytmdash replace Transfer for sample management.
+**Goal:** implement the missing operations that make Kitsmith replace Transfer for sample management.
 
 ### Scope — only after protocol verification
 
@@ -2354,7 +2354,7 @@ If Sound Lock indexing is unavailable, the UI must explicitly say the result is 
 
 1. Open +Drive.
 2. Drag `Kick Dusty.wav` to BD in a visible kit destination or use `Assign to track...`.
-3. Rytmdash detects whether the sample is already loaded into the project.
+3. Kitsmith detects whether the sample is already loaded into the project.
 4. Preview explains slot reuse/allocation.
 5. Backup/execute/verify.
 6. BD card updates immediately.
@@ -2367,7 +2367,7 @@ The user never manually types a sample slot number unless they choose an advance
 2. Target project highlights as compatible.
 3. Transfer Plan lists kit destination and sample dependencies.
 4. Any conflicts are resolved before execution.
-5. Rytmdash copies mappings and kit, verifies, and shows success.
+5. Kitsmith copies mappings and kit, verifies, and shows success.
 
 No manual “remember that Crash is slot 3 in source but slot 22 in target” step.
 
@@ -2465,7 +2465,7 @@ After the management foundation is solid:
 - Global-slot comparison.
 - Cross-device transfer when more Elektron adapters exist.
 - Sample Prep waveform editor.
-- Verified direct project load from Rytmdash.
+- Verified direct project load from Kitsmith.
 
 ---
 
@@ -2588,11 +2588,11 @@ The UI redesign should not claim cross-project functionality before the indexer 
 
 # PART XX — SOURCE NOTES
 
-This document is a future-state product specification built on the current Rytmdash milestone PRD and Analog Rytm MKII OS 1.72 documentation.
+This document is a future-state product specification built on the current Kitsmith milestone PRD and Analog Rytm MKII OS 1.72 documentation.
 
 Primary sources used for device facts and feature opportunities:
 
-- Existing Rytmdash PRD / system description, version 2026-09-05.
+- Existing Kitsmith PRD / system description, version 2026-09-05.
 - Elektron Analog Rytm MKII User Manual, OS 1.72 (official PDF):
   https://elektron.se/wp-content/uploads/2025/01/Analog-Rytm-MKII-User-Manual_ENG_OS1.72_250130.pdf
 - Elektron support: “The difference between Sounds and Samples”.
@@ -2613,7 +2613,7 @@ Important manual-derived facts used in this PRD include:
 
 # FINAL PRODUCT DEFINITION
 
-Rytmdash should feel like a **visual dependency-aware librarian for Elektron hardware**.
+Kitsmith should feel like a **visual dependency-aware librarian for Elektron hardware**.
 
 The 12-pad grid remains the musical center of the Analog Rytm experience, but it sits inside a stronger management system:
 
@@ -2626,7 +2626,7 @@ The 12-pad grid remains the musical center of the Analog Rytm experience, but it
 - every write is previewed, backed up and verified,
 - partial or uncertain data is never disguised as certainty.
 
-When the product reaches the cross-project kit-transfer milestone, the user should be able to perform in seconds what currently requires a careful manual sequence of project switching, sample-slot bookkeeping and transfer utilities. That is the defining value of Rytmdash.
+When the product reaches the cross-project kit-transfer milestone, the user should be able to perform in seconds what currently requires a careful manual sequence of project switching, sample-slot bookkeeping and transfer utilities. That is the defining value of Kitsmith.
 
 ---
 
@@ -2634,7 +2634,7 @@ When the product reaches the cross-project kit-transfer milestone, the user shou
 
 The product goal expands from librarian to **full Rytm management**: everything
 the device allows should be creatable, editable, playable and analyzable from
-Rytmdash. The per-operation feasibility/status ledger is
+Kitsmith. The per-operation feasibility/status ledger is
 `docs/management-matrix.md`; the sound-design ground truth is the
 `ar-sound-machines` skill. WP0–WP17 stand unchanged; the following work packages
 extend them.

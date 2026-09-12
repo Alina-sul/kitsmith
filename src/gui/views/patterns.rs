@@ -4,14 +4,14 @@
 
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, ScrollArea, Sense, Stroke};
 
-use crate::gui::app::{ProjectTab, RytmdashApp};
+use crate::gui::app::{KitsmithApp, ProjectTab};
 use crate::gui::{theme, widgets};
 use crate::model::names;
 use crate::model::{pattern_display_name, ProjectModel};
 use crate::ops::Plan;
 use crate::transfer;
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let connected = app.connected_in_port();
     let capturing = app.capture.is_running();
@@ -192,7 +192,7 @@ fn clip_age_label(captured_at_unix: u64) -> String {
 
 /// The paste-plan modal (PRD §30–§31): remaps, missing samples, overwrite
 /// warnings — then one named action through the backup-first pipeline.
-fn paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
+fn paste_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
     if !app.ui_state.paste_modal_open {
         return;
     }
@@ -421,7 +421,7 @@ fn pattern_cell(
             if ui
                 .add_enabled(can_capture, egui::Button::new("Copy pattern"))
                 .on_hover_text(
-                    "Copies this pattern, its kit and Sound-locked pool sounds to the rytmdash \
+                    "Copies this pattern, its kit and Sound-locked pool sounds to the kitsmith \
                      clipboard — paste it into any project.",
                 )
                 .on_disabled_hover_text("Connect the Rytm first")

@@ -1,7 +1,7 @@
 //! MIDI Device Inquiry build/parse tests.
 
-use rytmdash::config::ELEKTRON_MANUFACTURER_ID;
-use rytmdash::midi::inquiry::{device_inquiry_request, parse_identity_reply};
+use kitsmith::config::ELEKTRON_MANUFACTURER_ID;
+use kitsmith::midi::inquiry::{device_inquiry_request, parse_identity_reply};
 
 /// A plausible AR MKII reply: Elektron manufacturer, family 16 (the id
 /// elektroid maps to AR MKII), ASCII version "1.72".

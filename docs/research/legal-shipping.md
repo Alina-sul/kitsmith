@@ -10,7 +10,7 @@ legal category — provided the hygiene below. Consult a lawyer before any
 - **Protocol interoperability is protected**: EU Software Directive Art. 6 and
   US precedent (Sega v. Accolade; DMCA §1201(f)) cover reverse-engineering for
   interoperability, as long as it is wire-observation / clean-room — never
-  decompiling Elektron code. rytmdash only observes sysex and uses community
+  decompiling Elektron code. kitsmith only observes sysex and uses community
   specs.
 - **Direct precedent, same device family, years public, no takedowns**:
   elektroid, libanalogrytm, rytm-rs, Elk-Herd, MegaCommand, STROM (sold on the
@@ -21,11 +21,12 @@ legal category — provided the hygiene below. Consult a lawyer before any
 
 ## Risk checklist before public release
 
-1. **Product name (the one real exposure)**: "rytmdash" contains Elektron's
-   "Rytm" trademark. Saying "works with Elektron Analog Rytm MKII" in a
-   description is nominative fair use; the mark *inside the product name* is
-   weaker ground. Decide: rename, or accept that a trademark letter would
-   target this first.
+1. **Product name — RESOLVED 2026-09-12**: the product was renamed from
+   "rytmdash" (which contained Elektron's "Rytm" mark) to **Kitsmith**, which
+   contains no Elektron marks and showed no music-software conflicts in
+   searches. Remaining gate: a proper trademark search before commercial
+   launch. Saying "works with Elektron Analog Rytm MKII" in descriptions is
+   nominative fair use and stays.
 2. **Disclaimer everywhere the product speaks** (app about-box, README, site):
    "Not affiliated with or endorsed by Elektron. Elektron, Analog Rytm and
    +Drive are trademarks of Elektron Music Machines AB." No Elektron logos.

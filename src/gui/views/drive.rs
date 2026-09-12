@@ -6,11 +6,11 @@ use std::collections::BTreeMap;
 
 use eframe::egui::{self, RichText, ScrollArea};
 
-use crate::gui::app::{page_title, RytmdashApp};
+use crate::gui::app::{page_title, KitsmithApp};
 use crate::gui::{theme, widgets};
 use crate::model::ProjectModel;
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     page_title(ui, "+Drive");
     let Some(port) = app.connected_in_port() else {
         ui.label(

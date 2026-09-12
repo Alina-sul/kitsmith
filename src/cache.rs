@@ -85,14 +85,14 @@ pub fn load_project_manifest(dir: &Path) -> ProjectManifest {
         .unwrap_or_default()
 }
 
-/// Platform cache directory (`~/Library/Application Support/rytmdash` on
-/// macOS, `~/.rytmdash` elsewhere). Not created until the first save.
+/// Platform cache directory (`~/Library/Application Support/kitsmith` on
+/// macOS, `~/.kitsmith` elsewhere). Not created until the first save.
 pub fn default_dir() -> PathBuf {
     let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
     if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/rytmdash")
+        home.join("Library/Application Support/kitsmith")
     } else {
-        home.join(".rytmdash")
+        home.join(".kitsmith")
     }
 }
 

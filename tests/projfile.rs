@@ -1,7 +1,7 @@
 //! Raw project payload parser: synthetic fixture built at the documented
 //! offsets (verified against live AR MKII OS 1.72 downloads).
 
-use rytmdash::device::projfile::{is_raw_project, parse_raw_project};
+use kitsmith::device::projfile::{is_raw_project, parse_raw_project};
 
 const PATTERNS_OFFSET: usize = 0x3364;
 const PATTERN_SIZE: usize = 0x332D;
@@ -60,7 +60,7 @@ fn parses_name_kits_and_pattern_links() {
 
 #[test]
 fn project_name_patch_round_trips() {
-    use rytmdash::device::projfile::patch_project_name;
+    use kitsmith::device::projfile::patch_project_name;
     let mut bytes = fixture();
     patch_project_name(&mut bytes, "LIVE SET A").expect("patch");
     let snapshot = parse_raw_project(&bytes).expect("parse");

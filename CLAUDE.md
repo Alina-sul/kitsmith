@@ -1,4 +1,4 @@
-# CLAUDE.md — rytmdash
+# CLAUDE.md — kitsmith
 
 **Full management suite for the Elektron Analog Rytm MKII.** A native app that
 recognizes the Rytm over USB and makes everything manageable that the device
@@ -84,6 +84,23 @@ roadmap in **`docs/management-matrix.md`**; the v1 record in `docs/plan.md`.
 - Samples move only via the file protocol; kit/sound/pattern objects only via object
   sysex. Don't conflate the two.
 - AR native sample format: **16-bit, 48 kHz, mono** — convert on import like Transfer does.
+
+## Legal & licensing (see docs/research/legal-shipping.md)
+
+- **No Elektron marks in product identity.** The product is **Kitsmith** — never put
+  "Elektron", "Rytm" or "+Drive" in the app name, binary/crate name, branding, or
+  domain. "Works with Elektron Analog Rytm MKII" in descriptions is fine (nominative
+  use) and must sit next to the non-affiliation disclaimer (`config::LEGAL_DISCLAIMER`
+  — the single source of that text; README/NOTICE mirror it).
+- **Never commit or distribute Elektron content**: no manual PDFs (keep `reference/`
+  gitignored), no factory samples/Sounds, no firmware, no device dumps in fixtures —
+  test fixtures must be synthetic or from the developer's own data.
+- **elektroid is GPLv3**: protocol spec only, never ported/derived code (also listed
+  under hard constraints — it is both a legal and a licensing rule).
+- **New dependency ⇒ NOTICE.md row.** Every crate or protocol reference added gets an
+  attribution entry in `NOTICE.md` in the same PR.
+- **Interop must stay clean-room**: implement from wire observation and community
+  specs; never decompile Elektron software or firmware.
 
 ## Conventions
 

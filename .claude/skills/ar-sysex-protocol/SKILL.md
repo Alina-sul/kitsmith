@@ -37,7 +37,7 @@ Undocumented, community reverse-engineered. Two layers of prior art:
 - Device sysex receive can run regardless of active menu; data saved to the slot
   specified in the dump, or first free if unspecified.
 
-## Safety rules for rytmdash
+## Safety rules for kitsmith
 
 1. Pull a full backup (`.syx`/`.arprj`) before the first write of a session.
 2. Byte-level round-trip test any object type on this firmware before enabling

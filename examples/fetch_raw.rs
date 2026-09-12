@@ -1,10 +1,10 @@
 //! Downloads one project slot uncompressed and saves the raw payload for
 //! format analysis. Read-only. Usage: `cargo run --example fetch_raw -- 1`
 
-use rytmdash::device::detect::is_rytm_port;
-use rytmdash::device::files::{FileClient, PROJECTS_PATH};
-use rytmdash::midi::link::MidiLink;
-use rytmdash::midi::ports;
+use kitsmith::device::detect::is_rytm_port;
+use kitsmith::device::files::{FileClient, PROJECTS_PATH};
+use kitsmith::midi::link::MidiLink;
+use kitsmith::midi::ports;
 
 fn main() {
     let slot: u32 = std::env::args()

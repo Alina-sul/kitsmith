@@ -1,5 +1,5 @@
 [package]
-name = "rytmdash"
+name = "kitsmith"
 version = "0.1.0"
 edition = "2021"
 description = "Smart dashboard for the Elektron Analog Rytm MKII"

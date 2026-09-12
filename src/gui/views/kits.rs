@@ -7,7 +7,7 @@ use eframe::egui::{
     self, CornerRadius, Frame, Id, Margin, RichText, ScrollArea, Sense, Stroke, Vec2,
 };
 
-use crate::gui::app::{KitFilter, RytmdashApp};
+use crate::gui::app::{KitFilter, KitsmithApp};
 use crate::gui::execute::PendingAssign;
 use crate::gui::{theme, widgets};
 use crate::model::names::{self, ResolvedName};
@@ -15,7 +15,7 @@ use crate::model::{pattern_display_name, KitModel, ProjectModel};
 
 use super::SlotDrag;
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let connected = app.connected_in_port();
     let browsing = app.is_browsing_snapshot();
@@ -187,7 +187,7 @@ fn kit_clipboard_banner(
 }
 
 /// The kit paste-plan modal (PRD §30–§31, kit-only slice).
-fn kit_paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
+fn kit_paste_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
     if !app.ui_state.kit_paste_modal_open {
         return;
     }
@@ -394,7 +394,7 @@ fn kit_list(
                     if ui
                         .add_enabled(can_capture, egui::Button::new("Copy kit"))
                         .on_hover_text(
-                            "Copies this kit (with its sample references) to the rytmdash \
+                            "Copies this kit (with its sample references) to the kitsmith \
                              clipboard — paste it into any project.",
                         )
                         .on_disabled_hover_text("Connect the Rytm first")

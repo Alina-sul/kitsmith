@@ -1,5 +1,5 @@
 //! Converts raw object records (as stored inside project payloads) into
-//! object sysex via libanalogrytm — the bridge that lets Rytmdash copy a kit
+//! object sysex via libanalogrytm — the bridge that lets Kitsmith copy a kit
 //! straight out of a project backup without the device loading that project.
 
 use rytm_sys::{

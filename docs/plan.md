@@ -1,4 +1,4 @@
-# rytmdash — software plan
+# kitsmith — software plan
 
 > **Direction update (2026-09):** the goal has grown from "move samples/kits
 > between projects" to **full Rytm management** — create/edit/save kits, scenes
@@ -18,7 +18,7 @@ move between projects and the +Drive by drag & drop.
 Library + thin binary, mirroring the flows in `docs/research/current-usage-flow.md`:
 
 ```
-rytmdash/
+kitsmith/
 ├── src/main.rs            # bootstrap only
 ├── src/lib.rs             # wiring
 ├── src/midi/              # transport: port discovery, device inquiry, sysex framing,

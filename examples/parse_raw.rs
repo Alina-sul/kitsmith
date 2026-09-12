@@ -1,7 +1,7 @@
 //! Parses a raw project payload from disk and prints a summary.
 //! Usage: `cargo run --example parse_raw -- /path/to/project.raw`
 
-use rytmdash::device::projfile::parse_raw_project;
+use kitsmith::device::projfile::parse_raw_project;
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: parse_raw <file>");
@@ -33,7 +33,7 @@ fn main() {
             p.kit_link.map(|k| {
                 format!(
                     "{}→kit{:02}",
-                    rytmdash::model::pattern_display_name(p.index),
+                    kitsmith::model::pattern_display_name(p.index),
                     k + 1
                 )
             })
@@ -52,7 +52,7 @@ fn main() {
     );
 
     // Full dashboard-model decode (kits + patterns through libanalogrytm).
-    match rytmdash::device::projfile::to_project_model(&bytes, &[]) {
+    match kitsmith::device::projfile::to_project_model(&bytes, &[]) {
         Ok(model) => {
             let kit = &model.kits[0];
             println!(
@@ -69,7 +69,7 @@ fn main() {
 
     // End-to-end check of copy-from-backup: convert the first in-use kit.
     if let Some(kit) = snapshot.kits.iter().find(|k| snapshot.kit_in_use(k.index)) {
-        match rytmdash::transfer::capture_kit_from_backup(&bytes, &snapshot, "backup", kit.index) {
+        match kitsmith::transfer::capture_kit_from_backup(&bytes, &snapshot, "backup", kit.index) {
             Ok(clip) => println!(
                 "capture_kit_from_backup OK: '{}' · {} sample dep(s) · {} bytes sysex",
                 clip.source_hint,

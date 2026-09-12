@@ -2,7 +2,7 @@
 
 The product goal (2026-09 direction): **manage everything on the Rytm that is
 manageable** — create, rename, reorder, move, bulk-edit, play, and analyze — from
-rytmdash. This document is the single roadmap ledger for that goal: what each
+kitsmith. This document is the single roadmap ledger for that goal: what each
 operation means, which protocol carries it, and where it stands.
 
 Protocols: **FP** = Elektron file protocol (samples, +Drive, project/sound files);

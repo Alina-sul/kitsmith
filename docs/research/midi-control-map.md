@@ -1,7 +1,7 @@
 # AR MKII MIDI control map (manual Appendix C, OS 1.72)
 
 The Rytm is fully playable and largely controllable over **plain MIDI** — no sysex,
-no write risk. This is the transport for rytmdash's "play pads / play kits /
+no write risk. This is the transport for kitsmith's "play pads / play kits /
 audition scenes & performances" features. Source: manual pp. 85–95.
 
 ## Note triggers (play)
@@ -19,7 +19,7 @@ of a Sound" needs the track made active first.
 
 ## Control changes worth building on (per-track channel unless noted)
 
-| CC | Parameter | Use in rytmdash |
+| CC | Parameter | Use in kitsmith |
 | --- | --- | --- |
 | 92 | **Active Scene** | Switch scenes from the app (audition scenes live) |
 | 35–47 | Performance params 1–12 | Drive performance macros from the app (sliders = pad pressure) |

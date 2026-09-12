@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use rytmdash::ops::{execute, DeviceBackend, OpError, OpStep, Plan};
+use kitsmith::ops::{execute, DeviceBackend, OpError, OpStep, Plan};
 
 /// In-memory device: records calls, serves configurable slot state.
 #[derive(Default)]

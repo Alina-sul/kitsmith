@@ -1,6 +1,6 @@
-# Device family landscape — how unique is the Rytm, how portable is rytmdash?
+# Device family landscape — how unique is the Rytm, how portable is kitsmith?
 
-Question (2026-09-12): are there similar devices, and could rytmdash become
+Question (2026-09-12): are there similar devices, and could kitsmith become
 per-device software, or is the AR ecosystem too unique?
 
 ## The three layers port very differently
@@ -12,7 +12,7 @@ MKI/MKII/Keys, Analog Rytm MKI/MKII, Analog Heat, Digitakt I/II, Digitone
 I/II/Keys, Syntakt, Model:Samples, Model:Cycles, Monomachine MKII — differing
 only in a per-device capability table (which filesystems exist: sample / data /
 project / sound / preset / raw). Elektron's own Transfer is likewise one app for
-all devices. Everything rytmdash speaks over this protocol (+Drive browse,
+all devices. Everything kitsmith speaks over this protocol (+Drive browse,
 sample up/download/rename/delete, project backup, 48k/16-bit conversion)
 generalizes with device-ID + capability changes.
 
@@ -23,7 +23,7 @@ libanalogrytm/rytm-rs cover only the AR. Concepts don't even map: the Digitakt
 has **no kits** (sounds live in the pattern), a Digitone sound is an FM patch,
 Syntakt has its own machine set. Each device needs its own libanalogrytm-scale
 effort; community coverage varies (Digitakt: decent — see Elk-Herd, the closest
-existing cousin to rytmdash; Syntakt/Digitone II: thin).
+existing cousin to kitsmith; Syntakt/Digitone II: thin).
 
 ### 3. Domain model & UX — the device's identity
 
@@ -32,7 +32,7 @@ existing cousin to rytmdash; Syntakt/Digitone II: thin).
 the shell (sidebar, project browser, plan modal, activity log, import queue)
 but need its own workspace.
 
-## Portability of current rytmdash modules
+## Portability of current kitsmith modules
 
 | Module | Ports to another Elektron device |
 | --- | --- |

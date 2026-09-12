@@ -1,7 +1,7 @@
 //! Sysex reassembly: fragmented messages must be stitched back together —
 //! the cause of "reply received but not understood" partial syncs.
 
-use rytmdash::midi::link::SysexAssembler;
+use kitsmith::midi::link::SysexAssembler;
 
 #[test]
 fn whole_message_passes_through() {

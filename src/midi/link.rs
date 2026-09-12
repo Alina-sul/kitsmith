@@ -104,7 +104,7 @@ impl MidiLink {
         let input = midi_in
             .connect(
                 &in_p,
-                "rytmdash-link-in",
+                "kitsmith-link-in",
                 move |_ts, msg, _| {
                     // Large sysex arrives fragmented across packets;
                     // reassemble before queueing. Non-sysex is dropped.
@@ -116,7 +116,7 @@ impl MidiLink {
             )
             .map_err(|e| LinkError::Midi(e.to_string()))?;
         let out = midi_out
-            .connect(&out_p, "rytmdash-link-out")
+            .connect(&out_p, "kitsmith-link-out")
             .map_err(|e| LinkError::Midi(e.to_string()))?;
 
         Ok(Self {
