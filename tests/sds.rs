@@ -101,3 +101,18 @@ fn parses_handshakes() {
     assert_eq!(parse_handshake(&dump_header(0, 0, 48_000, 10)), None);
     assert_eq!(parse_handshake(&[]), None);
 }
+
+#[test]
+fn short_final_packet_is_padded_with_encoded_silence() {
+    // One word short of a full packet: the tail must decode to silence, not
+    // to the -32768 that a raw-zero triplet would mean in offset encoding.
+    let pcm = vec![1234i16; WORDS_PER_PACKET - 1];
+    let packets = data_packets(0, &pcm);
+    assert_eq!(packets.len(), 1);
+    let tail = [
+        packets[0][5 + 3 * (WORDS_PER_PACKET - 1)],
+        packets[0][6 + 3 * (WORDS_PER_PACKET - 1)],
+        packets[0][7 + 3 * (WORDS_PER_PACKET - 1)],
+    ];
+    assert_eq!(unpack_word(tail), 0);
+}

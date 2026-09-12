@@ -125,6 +125,7 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
         let query = app.ui_state.project_search.to_lowercase();
         let busy = app.fileops.is_running();
         let rearrange = app.ui_state.rearrange;
+        let mut any_shown = false;
         for id in 1..=128u32 {
             match model.projects.iter().find(|p| p.id == id) {
                 Some(p) => {
@@ -141,6 +142,7 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     {
                         continue;
                     }
+                    any_shown = true;
                     project_row(
                         app,
                         ui,
@@ -165,6 +167,9 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     }
                 }
             }
+        }
+        if !any_shown {
+            ui.label(RichText::new("No project matches this search.").color(theme::TEXT_MUTED));
         }
     });
 

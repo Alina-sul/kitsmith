@@ -1,10 +1,14 @@
 //! Import queue model: WAVs dropped on the window are converted here and
 //! uploaded to the device over SDS. Rendering lives in
 //! [`crate::gui::views::import_page`]; this module owns the queue state and
-//! the upload workers.
+//! the background workers.
+//!
+//! Both stages run off the UI thread, and both are *serial*: conversion is
+//! CPU-bound, and SDS carries exactly one dump at a time — parallel senders
+//! would interleave packets and handshakes on the same MIDI port.
 
-use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -26,47 +30,68 @@ pub struct ImportItem {
 
 #[derive(Clone)]
 pub enum ImportState {
+    Converting,
     Converted,
     Uploading(UploadProgress),
     Sent { open_loop: bool },
     Failed(String),
 }
 
-/// The import queue + upload workers.
+/// The import queue + its background workers.
 #[derive(Default)]
 pub struct ImportPanel {
     items: Vec<Arc<Mutex<ImportItem>>>,
     cancel: Arc<AtomicBool>,
+    /// Set while the upload worker owns the MIDI link, so a second batch
+    /// cannot start a competing dump on the same port.
+    uploading: Arc<AtomicBool>,
     /// Next SDS sample number to use this session (device-side slot of the
     /// dump protocol, not a project sample slot).
     next_sample_number: u16,
 }
 
 impl ImportPanel {
-    /// Converts newly dropped files and queues them.
-    pub fn add_dropped_files(&mut self, paths: Vec<PathBuf>) {
-        for path in paths {
-            let item = match convert_wav_file(&path) {
-                Ok(sample) => ImportItem {
-                    sample,
-                    state: ImportState::Converted,
-                    selected: true,
-                },
-                Err(e) => ImportItem {
-                    sample: ConvertedSample {
-                        name: path
-                            .file_name()
-                            .map_or_else(|| "?".into(), |n| n.to_string_lossy().into_owned()),
-                        pcm: Vec::new(),
-                        source_rate: 0,
-                        source_channels: 0,
-                    },
-                    state: ImportState::Failed(e.to_string()),
+    /// Queues newly dropped files and converts them on a worker thread.
+    ///
+    /// Conversion (decode + windowed-sinc resample) is seconds of work for a
+    /// long file, so the queue rows appear immediately as `Converting` rather
+    /// than freezing the window until every drop is decoded.
+    pub fn add_dropped_files(&mut self, paths: Vec<PathBuf>, ctx: &egui::Context) {
+        let pending: Vec<(PathBuf, Arc<Mutex<ImportItem>>)> = paths
+            .into_iter()
+            .map(|path| {
+                let item = Arc::new(Mutex::new(ImportItem {
+                    sample: placeholder_sample(&path),
+                    state: ImportState::Converting,
                     selected: false,
-                },
-            };
-            self.items.push(Arc::new(Mutex::new(item)));
+                }));
+                self.items.push(Arc::clone(&item));
+                (path, item)
+            })
+            .collect();
+        if pending.is_empty() {
+            return;
         }
+        let repaint = ctx.clone();
+        thread::Builder::new()
+            .name("wav-convert".into())
+            .spawn(move || {
+                for (path, item) in &pending {
+                    let converted = convert_wav_file(path);
+                    let mut guard = item.lock().expect("import item lock poisoned");
+                    match converted {
+                        Ok(sample) => {
+                            guard.sample = sample;
+                            guard.state = ImportState::Converted;
+                            guard.selected = true;
+                        }
+                        Err(e) => guard.state = ImportState::Failed(e.to_string()),
+                    }
+                    drop(guard);
+                    repaint.request_repaint();
+                }
+            })
+            .expect("failed to spawn conversion thread");
     }
 
     pub fn len(&self) -> usize {
@@ -81,6 +106,18 @@ impl ImportPanel {
         &self.items
     }
 
+    /// True while the upload worker holds the device link.
+    pub fn is_uploading(&self) -> bool {
+        self.uploading.load(Ordering::Relaxed)
+    }
+
+    /// Asks the running batch to stop. The current transfer aborts at its next
+    /// packet boundary and the rest of the batch is skipped; every item that
+    /// did not finish returns to `Converted`, ready to be sent again.
+    pub fn cancel_uploads(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
     pub fn remove(&mut self, index: usize) {
         if index < self.items.len() {
             self.items.remove(index);
@@ -93,7 +130,8 @@ impl ImportPanel {
         }
     }
 
-    /// Starts uploads for every selected, converted item (one worker each).
+    /// Uploads every selected, converted item — one after another, over a
+    /// single link. Does nothing while a batch is already running.
     pub fn upload_selected(&mut self, in_port: &str, ctx: &egui::Context) {
         let queued: Vec<Arc<Mutex<ImportItem>>> = self
             .items
@@ -104,47 +142,84 @@ impl ImportPanel {
             })
             .cloned()
             .collect();
-        for item in queued {
-            self.start_upload(item, in_port.to_owned(), ctx);
-        }
+        self.start_uploads(queued, in_port.to_owned(), ctx);
     }
 
-    /// Starts one upload worker for `item`.
-    pub fn start_upload(
+    /// Starts the (single) upload worker for `items`.
+    fn start_uploads(
         &mut self,
-        item: Arc<Mutex<ImportItem>>,
+        items: Vec<Arc<Mutex<ImportItem>>>,
         in_port: String,
         ctx: &egui::Context,
     ) {
-        let sample_number = self.next_sample_number;
-        self.next_sample_number = self.next_sample_number.wrapping_add(1);
+        if items.is_empty() || self.uploading.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let batch: Vec<(u16, Arc<Mutex<ImportItem>>)> = items
+            .into_iter()
+            .map(|item| {
+                let sample_number = self.next_sample_number;
+                self.next_sample_number = self.next_sample_number.wrapping_add(1);
+                (sample_number, item)
+            })
+            .collect();
         let cancel = Arc::clone(&self.cancel);
+        cancel.store(false, Ordering::Relaxed);
+        let uploading = Arc::clone(&self.uploading);
         let repaint = ctx.clone();
         thread::Builder::new()
             .name("sds-upload".into())
             .spawn(move || {
-                let sample = {
-                    let mut guard = item.lock().expect("import item lock poisoned");
-                    guard.state = ImportState::Uploading(UploadProgress::default());
-                    guard.sample.clone()
-                };
-                repaint.request_repaint();
-
-                let outcome =
-                    run_upload(&in_port, sample_number, &sample, &cancel, &item, &repaint);
-
-                let mut guard = item.lock().expect("import item lock poisoned");
-                guard.state = match outcome {
-                    UploadOutcome::Sent { open_loop } => ImportState::Sent { open_loop },
-                    UploadOutcome::Cancelled => ImportState::Converted,
-                    UploadOutcome::Rejected(e) | UploadOutcome::LinkFailed(e) => {
-                        ImportState::Failed(e)
+                for (sample_number, item) in &batch {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
                     }
-                };
+                    upload_one(&in_port, *sample_number, item, &cancel, &repaint);
+                }
+                uploading.store(false, Ordering::Relaxed);
                 repaint.request_repaint();
             })
             .expect("failed to spawn upload thread");
     }
+}
+
+/// A queue row for a file that has not been decoded yet.
+fn placeholder_sample(path: &Path) -> ConvertedSample {
+    ConvertedSample {
+        name: path
+            .file_name()
+            .map_or_else(|| "?".into(), |n| n.to_string_lossy().into_owned()),
+        pcm: Vec::new(),
+        source_rate: 0,
+        source_channels: 0,
+    }
+}
+
+/// Runs one item's transfer start-to-finish, publishing its state.
+fn upload_one(
+    in_port: &str,
+    sample_number: u16,
+    item: &Arc<Mutex<ImportItem>>,
+    cancel: &Arc<AtomicBool>,
+    repaint: &egui::Context,
+) {
+    let sample = {
+        let mut guard = item.lock().expect("import item lock poisoned");
+        guard.state = ImportState::Uploading(UploadProgress::default());
+        guard.sample.clone()
+    };
+    repaint.request_repaint();
+
+    let outcome = run_upload(in_port, sample_number, &sample, cancel, item, repaint);
+
+    let mut guard = item.lock().expect("import item lock poisoned");
+    guard.state = match outcome {
+        UploadOutcome::Sent { open_loop } => ImportState::Sent { open_loop },
+        UploadOutcome::Cancelled => ImportState::Converted,
+        UploadOutcome::Rejected(e) | UploadOutcome::LinkFailed(e) => ImportState::Failed(e),
+    };
+    drop(guard);
+    repaint.request_repaint();
 }
 
 fn run_upload(

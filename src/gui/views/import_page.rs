@@ -97,14 +97,24 @@ fn toolbar(
             import.set_all_selected(false);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let connected = device_in_port.is_some();
+            let busy = import.is_uploading();
             let response = ui
-                .add_enabled(connected, egui::Button::new("⇪ Upload selected"))
-                .on_disabled_hover_text("Connect the Analog Rytm first");
+                .add_enabled(
+                    device_in_port.is_some() && !busy,
+                    egui::Button::new("⇪ Upload selected"),
+                )
+                .on_disabled_hover_text(if busy {
+                    "An upload batch is already running — samples transfer one at a time."
+                } else {
+                    "Connect the Analog Rytm first"
+                });
             if response.clicked() {
                 if let Some(port) = device_in_port {
                     import.upload_selected(port, ctx);
                 }
+            }
+            if busy && ui.button("Cancel upload").clicked() {
+                import.cancel_uploads();
             }
         });
     });
@@ -112,6 +122,14 @@ fn toolbar(
 
 fn status_cell(ui: &mut egui::Ui, state: &ImportState) {
     match state {
+        ImportState::Converting => {
+            ui.spinner();
+            ui.label(
+                RichText::new("Converting…")
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+            );
+        }
         ImportState::Converted => {
             widgets::badge(ui, "READY", theme::TEXT_MUTED);
         }

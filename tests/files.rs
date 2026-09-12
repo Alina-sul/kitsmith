@@ -128,3 +128,13 @@ fn parses_hash_path_reply() {
     missing.extend_from_slice(b"/x\0");
     assert!(parse_hash_path(&missing).is_none());
 }
+
+#[test]
+fn ram_slot_count_is_clamped_to_the_reply_length() {
+    // A garbled count must not drive the allocation: only the entries the
+    // reply can actually carry are parsed.
+    let mut reply = vec![0, 0, 0, 0, 0x97, 0xFF, 0xFF, 0xFF, 0xFF];
+    reply.extend(std::iter::repeat_n(0u8, 11)); // exactly one entry
+    let slots = parse_ram_slots(&reply).expect("parses");
+    assert_eq!(slots.len(), 1);
+}

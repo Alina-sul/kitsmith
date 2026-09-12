@@ -36,10 +36,10 @@ impl LiveBackend {
             .ok_or_else(|| OpError::Device(format!("kit {kit_index} query got no reply")))
     }
 
-    /// Sends `msg` and waits for an accepted reply.
-    fn exchange(&mut self, msg: &[u8]) -> Option<Vec<u8>> {
-        self.link.send(msg).ok()?;
-        accept_reply(&self.link, &mut self.rytm)
+    /// Sends `query` and waits for the reply that answers it.
+    fn exchange(&mut self, query: &[u8]) -> Option<Vec<u8>> {
+        self.link.send(query).ok()?;
+        accept_reply(&self.link, &mut self.rytm, query)
     }
 }
 

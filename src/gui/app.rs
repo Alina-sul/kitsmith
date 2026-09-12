@@ -151,6 +151,8 @@ pub struct KitsmithApp {
     pub(crate) active_guess: Option<u32>,
     pub(crate) activity: Vec<ActivityEntry>,
     toasts: Vec<(String, Instant)>,
+    /// The device port the last frame saw, to notice reconnects.
+    seen_in_port: Option<String>,
 }
 
 impl KitsmithApp {
@@ -179,6 +181,7 @@ impl KitsmithApp {
             active_guess: None,
             activity: Vec::new(),
             toasts: Vec::new(),
+            seen_in_port: None,
         };
         app.identify_active_project();
         app
@@ -367,6 +370,18 @@ impl KitsmithApp {
             self.log_activity(kind, title, detail);
             self.model = Some(model);
             self.identify_active_project();
+            // A sync re-reads whatever project the hardware has loaded now,
+            // which may not be the one the session backup covers.
+            self.execute.invalidate_backup();
+        }
+
+        // A reconnect (or a different Rytm) invalidates the session backup for
+        // the same reason: the active project may have changed while we were
+        // not looking.
+        let in_port = self.connected_in_port();
+        if in_port != self.seen_in_port {
+            self.seen_in_port = in_port;
+            self.execute.invalidate_backup();
         }
 
         // Files dropped anywhere on the window enter the import queue.
@@ -380,7 +395,7 @@ impl KitsmithApp {
         });
         if !dropped.is_empty() {
             let count = dropped.len();
-            self.import.add_dropped_files(dropped);
+            self.import.add_dropped_files(dropped, ctx);
             self.toast(format!(
                 "{count} file{} added to Import",
                 if count == 1 { "" } else { "s" }
