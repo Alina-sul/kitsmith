@@ -13,4 +13,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      # claude-code-action@v1 exchanges an OIDC token at startup; the caller's
+      # permissions cap the reusable workflow's, so it must be granted here too.
+      id-token: write
     secrets: inherit
