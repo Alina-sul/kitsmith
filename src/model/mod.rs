@@ -237,41 +237,41 @@ impl ProjectModel {
             .map(|s| s.name.as_str())
     }
 
-    /// Everything known to reference `slot`: kit tracks, Sound Pool sounds
-    /// (with the patterns Sound-locking them), and trig sample plocks.
-    /// Only trustworthy for destructive decisions when [`Self::dependency_scan`]
-    /// is true — old caches lack the pattern scan.
-    pub fn slot_references(&self, slot: u8) -> SlotReferences {
-        let kit_uses = self.slot_usage().remove(&slot).unwrap_or_default();
-        let mut pool_uses = Vec::new();
+    /// The whole sample dependency graph, indexed by slot: kit tracks, Sound
+    /// Pool sounds (with the patterns Sound-locking them), and trig sample
+    /// plocks (PRD §3.6). The single definition of what "references a slot"
+    /// means — only trustworthy for destructive decisions when
+    /// [`Self::dependency_scan`] is true, since old caches lack the scan.
+    pub fn slot_reference_map(&self) -> BTreeMap<u8, SlotReferences> {
+        let mut map: BTreeMap<u8, SlotReferences> = BTreeMap::new();
+        for (slot, kit_uses) in self.slot_usage() {
+            map.entry(slot).or_default().kit_uses = kit_uses;
+        }
         for (index, sound) in self.pool_sounds.iter().enumerate() {
-            if sound.sample_slot != Some(slot) {
+            let Some(slot) = sound.sample_slot else {
                 continue;
-            }
+            };
             let pool_index = index as u8;
-            let patterns = self
-                .patterns
-                .iter()
-                .filter(|p| p.sound_locks.contains(&pool_index))
-                .map(|p| p.index)
-                .collect();
-            pool_uses.push(PoolUse {
+            map.entry(slot).or_default().pool_uses.push(PoolUse {
                 pool_index,
                 sound_name: sound.name.clone(),
-                patterns,
+                patterns: self.patterns_sound_locking(pool_index),
             });
         }
-        let plock_patterns = self
-            .patterns
-            .iter()
-            .filter(|p| p.plocked_sample_slots.contains(&slot))
-            .map(|p| p.index)
-            .collect();
-        SlotReferences {
-            kit_uses,
-            pool_uses,
-            plock_patterns,
+        for pattern in &self.patterns {
+            for slot in &pattern.plocked_sample_slots {
+                map.entry(*slot)
+                    .or_default()
+                    .plock_patterns
+                    .push(pattern.index);
+            }
         }
+        map
+    }
+
+    /// Everything known to reference one `slot` — see [`Self::slot_reference_map`].
+    pub fn slot_references(&self, slot: u8) -> SlotReferences {
+        self.slot_reference_map().remove(&slot).unwrap_or_default()
     }
 
     /// Whether `slot` can be unloaded without breaking anything the graph

@@ -569,6 +569,18 @@ impl RytmdashApp {
             DeviceState::Searching => None,
         }
     }
+
+    /// True while any worker owns the device. Each worker opens its own
+    /// `MidiLink` on the same port, and every open link receives *every*
+    /// reply — two concurrent conversations mis-attribute each other's
+    /// messages, so device work is strictly one at a time.
+    pub(crate) fn device_busy(&self) -> bool {
+        self.sync.is_running()
+            || self.backup.is_running()
+            || self.capture.is_running()
+            || self.fileops.is_running()
+            || self.execute.is_running()
+    }
 }
 
 impl eframe::App for RytmdashApp {
@@ -631,6 +643,21 @@ impl eframe::App for RytmdashApp {
         }
 
         self.show_toasts(&ctx);
+    }
+}
+
+/// Formats how long ago a unix timestamp was, for status lines fed by
+/// persisted data (backup manifests, the transfer clipboard).
+pub fn epoch_ago(unix_secs: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let secs = now.saturating_sub(unix_secs);
+    match secs {
+        0..=59 => "just now".to_owned(),
+        60..=3599 => format!("{}m ago", secs / 60),
+        3600..=86_399 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86_400),
     }
 }
 

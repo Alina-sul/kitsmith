@@ -2,8 +2,8 @@
 //! built per the reverse-engineered wire format).
 
 use rytmdash::device::files::{
-    frame, pack7, parse_data_dir, parse_hash_path, parse_ram_slots, parse_sample_dir, unframe,
-    unpack7,
+    chunk_crc, crc32, frame, pack7, parse_data_dir, parse_hash_path, parse_ram_slots,
+    parse_sample_dir, unframe, unpack7,
 };
 
 #[test]
@@ -127,4 +127,25 @@ fn parses_hash_path_reply() {
     missing.extend_from_slice(&[0; 8]);
     missing.extend_from_slice(b"/x\0");
     assert!(parse_hash_path(&missing).is_none());
+}
+
+// ---- Chunk checksum -------------------------------------------------------
+// The send and verify sides of a data transfer must agree on one CRC
+// variant; pinning the standard check vector keeps them from drifting.
+
+/// The CRC-32/IEEE check value, as published for the input `"123456789"`.
+const CRC32_CHECK_VECTOR: u32 = 0xCBF4_3926;
+
+#[test]
+fn chunk_crc_is_standard_crc32() {
+    assert_eq!(chunk_crc(b"123456789"), CRC32_CHECK_VECTOR);
+    assert_eq!(chunk_crc(&[]), 0);
+}
+
+#[test]
+fn chunk_crc_matches_a_running_init_of_all_ones() {
+    // `crc32` takes the *running* init, which the device sets to 0xFFFFFFFF;
+    // `crc32(0)` is that variant, and `chunk_crc` must not drift from it.
+    assert_eq!(chunk_crc(b"123456789"), crc32(0, b"123456789"));
+    assert_ne!(chunk_crc(b"123456789"), crc32(0xFFFF_FFFF, b"123456789"));
 }

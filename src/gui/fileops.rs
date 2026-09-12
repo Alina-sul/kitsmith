@@ -100,7 +100,12 @@ impl FileOpController {
         thread::Builder::new()
             .name("file-op".into())
             .spawn(move || {
-                let result = run_op(&in_port, &op);
+                // A panic here would leave the controller stuck in Running
+                // forever, disabling every file operation for the session.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_op(&in_port, &op)
+                }))
+                .unwrap_or_else(|_| Err("internal error while talking to the device".to_owned()));
                 *status.lock().expect("fileop status lock poisoned") =
                     OpStatus::Finished(Box::new(result));
                 on_change();
@@ -136,6 +141,25 @@ fn run_op(in_port: &str, op: &FileOp) -> Result<(FileOpOutcome, String), String>
     }
 }
 
+/// Writes `original` back over `path` after a failed write, and phrases the
+/// outcome for the user. Returns the message either way — the caller is on
+/// the error path already.
+fn restore_original(
+    link: &mut MidiLink,
+    client: &mut FileClient,
+    path: &str,
+    original: &[u8],
+    what_failed: &str,
+) -> String {
+    match client.upload_data(link, path, original, |_| {}) {
+        Ok(()) => format!("{what_failed} — the original project was restored"),
+        Err(e) => format!(
+            "{what_failed} AND the restore failed ({e}) — the slot may be incomplete, restore \
+             it manually from the local backup"
+        ),
+    }
+}
+
 fn rename_project(
     link: &mut MidiLink,
     client: &mut FileClient,
@@ -161,21 +185,30 @@ fn rename_project(
     let mut patched = original.bytes.clone();
     projfile::patch_project_name(&mut patched, new_name)?;
 
-    client.upload_data(link, &path, &patched, |_| {})?;
+    // A write that fails part-way leaves the slot half-overwritten, so it
+    // needs the same rollback as a failed verification.
+    if let Err(e) = client.upload_data(link, &path, &patched, |_| {}) {
+        return Err(restore_original(
+            link,
+            client,
+            &path,
+            &original.bytes,
+            &format!("the rename failed ({e})"),
+        ));
+    }
 
     // Verify byte-for-byte; on mismatch, restore the original.
     let read_back = client
         .download_data(link, &path, false, |_, _| {})
         .ok_or("rename written but verification download failed — re-check the slot")?;
     if read_back.bytes != patched {
-        let restore = client.upload_data(link, &path, &original.bytes, |_| {});
-        return Err(match restore {
-            Ok(()) => "verification mismatch — the original project was restored".into(),
-            Err(e) => format!(
-                "verification mismatch AND restore failed ({e}) — restore manually from the \
-                 local backup"
-            ),
-        });
+        return Err(restore_original(
+            link,
+            client,
+            &path,
+            &original.bytes,
+            "the rename did not verify",
+        ));
     }
     let clean = crate::model::names::clean(new_name).to_owned();
     cache::save_project_backup(&cache_dir, slot, &clean, &patched, crc32(0, &patched), true)

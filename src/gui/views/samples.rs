@@ -7,7 +7,7 @@ use eframe::egui::{self, Frame, Id, Margin, RichText, ScrollArea};
 use crate::gui::app::{ProjectTab, RytmdashApp};
 use crate::gui::{theme, widgets};
 use crate::model::names::{self, ResolvedName};
-use crate::model::{pattern_display_name, ProjectModel, SAMPLE_SLOT_COUNT};
+use crate::model::{pattern_display_name, ProjectModel, SlotReferences, SAMPLE_SLOT_COUNT};
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     let model = match app.ui_state.project {
@@ -19,22 +19,9 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     let Some(model) = model else {
         return;
     };
-    let usage = model.slot_usage();
-    // Full reference counts per slot: kit tracks + pool sounds + plocks.
-    let mut ref_counts: std::collections::BTreeMap<u8, usize> = usage
-        .iter()
-        .map(|(slot, uses)| (*slot, uses.len()))
-        .collect();
-    for sound in &model.pool_sounds {
-        if let Some(slot) = sound.sample_slot {
-            *ref_counts.entry(slot).or_default() += 1;
-        }
-    }
-    for pattern in &model.patterns {
-        for slot in &pattern.plocked_sample_slots {
-            *ref_counts.entry(*slot).or_default() += 1;
-        }
-    }
+    // The full dependency graph, built once for the whole page: the row
+    // counts and the inspector must never disagree.
+    let references = model.slot_reference_map();
     let selected = &mut app.ui_state.selected_sample_slot;
     let mut jump: Option<(usize, u8)> = None;
 
@@ -44,7 +31,8 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
         .show(ui, |ui| {
             if let Some(slot) = *selected {
-                if let Some(target) = slot_inspector(ui, model, slot, selected) {
+                let refs = references.get(&slot).cloned().unwrap_or_default();
+                if let Some(target) = slot_inspector(ui, model, slot, &refs, selected) {
                     jump = Some(target);
                 }
             } else {
@@ -64,7 +52,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             ui.label(
                 RichText::new(format!(
                     "{loaded} of {SAMPLE_SLOT_COUNT} project sample slots loaded · {} referenced",
-                    ref_counts.len()
+                    references.len()
                 ))
                 .color(theme::TEXT_SECONDARY),
             );
@@ -74,7 +62,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 
             ScrollArea::vertical().show(ui, |ui| {
                 for slot in 1..=SAMPLE_SLOT_COUNT {
-                    let uses = ref_counts.get(&slot).copied().unwrap_or(0);
+                    let uses = references.get(&slot).map_or(0, SlotReferences::count);
                     slot_row(ui, model, slot, uses, selected);
                 }
             });
@@ -201,6 +189,7 @@ fn slot_inspector(
     ui: &mut egui::Ui,
     model: &ProjectModel,
     slot: u8,
+    refs: &SlotReferences,
     selected: &mut Option<u8>,
 ) -> Option<(usize, u8)> {
     let mut jump = None;
@@ -237,7 +226,6 @@ fn slot_inspector(
         }
     });
 
-    let refs = model.slot_references(slot);
     widgets::inspector_group(ui, "USED BY", |ui| {
         if refs.is_empty() {
             ui.label(RichText::new("No known references").color(theme::TEXT_MUTED));

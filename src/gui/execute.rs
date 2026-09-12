@@ -46,6 +46,14 @@ pub struct ExecutePanel {
 }
 
 impl ExecutePanel {
+    /// True while a plan is executing against the device.
+    pub fn is_running(&self) -> bool {
+        matches!(
+            *self.state.lock().expect("exec state lock poisoned"),
+            ExecState::Running { .. }
+        )
+    }
+
     /// Starts executing an externally built plan (e.g. a pattern paste).
     pub fn launch(
         &mut self,
@@ -54,9 +62,13 @@ impl ExecutePanel {
         ctx: egui::Context,
         post_note: Option<String>,
     ) {
+        if self.is_running() {
+            return;
+        }
         self.post_note = post_note;
         self.spawn(plan, in_port, ctx);
     }
+
     /// Renders the preview modal + execution state. Call every frame.
     /// Returns the report once, when a finished execution is dismissed.
     pub fn show(

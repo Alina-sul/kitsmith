@@ -14,13 +14,14 @@ Device: Analog Rytm MKII, OS 1.72, USB-MIDI. Probe: `cargo run --example probe`
 | RAM slot table (0x17) | **verified** | 127 slots, 6 used, hash+size per slot | — |
 | Hash+size → +Drive path (0x23) | **verified** | resolves used slots incl. `/factory/...`, `/recorded/...` | `Slot N · name unavailable` |
 | Data download open/partial/close (0x54–0x56) | **verified** | `/projects/1` → 119,563 bytes in 16 chunks, ~68 KB/s; empty first chunk; `last` flag terminates | — |
-| Data chunk CRC | **verified** | device CRC = CRC-32 (IEEE) with running init `0xFFFFFFFF` over the chunk payload; chunk 1 reported `c294465e` = computed | ignore CRC, trust `last`+length |
+| Data chunk CRC | **verified** | device CRC = CRC-32 (IEEE) with running init `0xFFFFFFFF` over the chunk payload; chunk 1 reported `c294465e` = computed | downloads now reject a chunk whose CRC does not match (a silently corrupt backup is worse than a failed one); fall back to trusting `last`+length if this ever misfires |
 | Data payload compression | **verified** | `compressed=true`; payload magic `ac 11 d3 03 02 00 02 00 05 30 31 36 32 ...` — Elektron container, not zlib/gzip; listed size is the fixed 2 MB slot, wire size is compressed | treat payload as opaque (backup/fingerprint) |
 | Sample-off wire values (SMP OFF = 0x00/0xFF) | unverified | — | display-only assumption, blocks nothing |
 | SDS sample upload | unverified live | code path exists (M4); needs a listen test on device | open-loop mode |
 | Kit write + read-back (AssignSampleSlot) | **pending** | needs a scratch project loaded on the device first | MockBackend tests only |
 | Pattern/kit/pool-sound object writes (pattern paste) | **pending** | encode→decode round-trips offline (tests/transfer.rs); first hardware run should target a scratch project | MockBackend tests only |
-| Data write (0x57–0x59), move/copy/clear (0x5a–0x5c) | not implemented | write side gated on WP0 write verification | — |
+| Data write (0x57–0x59), copy (0x5b), RAM slot load (0x19) | **implemented, unverified live** | wire formats derived from elektroid/Transfer, never run against hardware. Exposed as *Rename on device*, *Copy to empty slot* and *Load into project slot*. Every path pulls a fresh backup first and reads back to verify; the rename rolls the original payload back when the write fails or does not verify | none — treat the first hardware run as a test on a scratch slot |
+| Data move/clear (0x5a, 0x5c) | not implemented | no caller yet | — |
 
 ## Raw project format (verified live, 2026-09-05)
 

@@ -3,7 +3,7 @@
 
 use eframe::egui::{self, RichText};
 
-use crate::gui::app::{ago, page_title, ProjectSelection, ProjectTab, RytmdashApp};
+use crate::gui::app::{ago, epoch_ago, page_title, ProjectSelection, ProjectTab, RytmdashApp};
 use crate::gui::views::{kits, overview, patterns, pool, samples};
 use crate::gui::{theme, widgets};
 use crate::model::names;
@@ -60,7 +60,7 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
     }
     ui.add_space(theme::GAP_S);
     ui.horizontal(|ui| {
-        let busy = app.fileops.is_running();
+        let busy = app.device_busy();
         if ui
             .add_enabled(!busy, egui::Button::new("Rename on device…"))
             .on_hover_text("Writes the native name into the project slot (verified).")
@@ -146,16 +146,17 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
                     .color(theme::TEXT_SECONDARY),
                 );
                 ui.add_space(4.0);
-                let connected = app.connected_in_port().is_some();
-                let busy = app.backup.is_running();
-                if busy {
+                let ready = app.connected_in_port().is_some() && !app.device_busy();
+                if app.backup.is_running() {
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.label("Downloading…");
                     });
                 } else if ui
-                    .add_enabled(connected, egui::Button::new("Index this project (~10 s)"))
-                    .on_disabled_hover_text("Connect the Rytm first")
+                    .add_enabled(ready, egui::Button::new("Index this project (~10 s)"))
+                    .on_disabled_hover_text(
+                        "Connect the Rytm and let any running device task finish",
+                    )
                     .clicked()
                 {
                     index_now = true;
@@ -172,21 +173,6 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
                     ctx.request_repaint();
                 });
         }
-    }
-}
-
-/// `2m ago`-style label for a unix timestamp.
-fn epoch_ago(unix_secs: u64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let secs = now.saturating_sub(unix_secs);
-    match secs {
-        0..=59 => "just now".to_owned(),
-        60..=3599 => format!("{}m ago", secs / 60),
-        3600..=86_399 => format!("{}h ago", secs / 3600),
-        _ => format!("{}d ago", secs / 86_400),
     }
 }
 

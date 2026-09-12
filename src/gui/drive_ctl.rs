@@ -10,20 +10,34 @@ use crate::device::files::{DriveEntry, FileClient};
 use crate::midi::link::MidiLink;
 use crate::midi::ports;
 
+/// What the browser knows about one directory: either its entries, or that
+/// the device did not answer. A failed read is remembered so the UI can
+/// offer a retry instead of silently showing an empty folder.
+pub type DriveListing = Option<Vec<DriveEntry>>;
+
 #[derive(Default)]
 pub struct DriveBrowser {
-    cache: Arc<Mutex<BTreeMap<String, Vec<DriveEntry>>>>,
+    cache: Arc<Mutex<BTreeMap<String, DriveListing>>>,
     loading: Arc<Mutex<Option<String>>>,
 }
 
 impl DriveBrowser {
-    /// Cached listing for `path`, if fetched this session.
-    pub fn get(&self, path: &str) -> Option<Vec<DriveEntry>> {
+    /// Cached listing for `path`: `None` when not fetched yet,
+    /// `Some(None)` when the read failed, `Some(Some(entries))` on success.
+    pub fn get(&self, path: &str) -> Option<DriveListing> {
         self.cache
             .lock()
             .expect("drive cache lock poisoned")
             .get(path)
             .cloned()
+    }
+
+    /// Forgets `path` so the next [`Self::request`] reads it again.
+    pub fn forget(&self, path: &str) {
+        self.cache
+            .lock()
+            .expect("drive cache lock poisoned")
+            .remove(path);
     }
 
     /// Fetches `path` unless cached or a fetch is already running.
@@ -46,11 +60,11 @@ impl DriveBrowser {
         thread::Builder::new()
             .name("drive-browse".into())
             .spawn(move || {
-                let entries = fetch(&in_port, &path).unwrap_or_default();
+                let listing = fetch(&in_port, &path);
                 cache
                     .lock()
                     .expect("drive cache lock poisoned")
-                    .insert(path, entries);
+                    .insert(path, listing);
                 *loading.lock().expect("drive loading lock poisoned") = None;
                 on_change();
             })

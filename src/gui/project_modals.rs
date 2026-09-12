@@ -20,6 +20,10 @@ fn start_op(app: &mut RytmdashApp, ctx: &egui::Context, op: FileOp) {
         app.toast("Connect the Rytm first".to_owned());
         return;
     };
+    if app.device_busy() {
+        app.toast("Another device task is running — wait for it to finish".to_owned());
+        return;
+    }
     let repaint = ctx.clone();
     app.fileops
         .start(port, op, move || repaint.request_repaint());
@@ -30,7 +34,7 @@ fn rename_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
         return;
     };
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let mut close = false;
     let mut confirm = false;
 
@@ -94,7 +98,7 @@ fn copy_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
         return;
     };
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let src_name = app
         .model
         .as_ref()
@@ -164,7 +168,7 @@ fn load_sample_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
         return;
     };
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
     let mut slot = app.ui_state.load_sample_slot;
     let slot_taken = app

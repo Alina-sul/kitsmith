@@ -4,7 +4,7 @@
 
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, ScrollArea, Sense, Stroke};
 
-use crate::gui::app::{ProjectTab, RytmdashApp};
+use crate::gui::app::{epoch_ago, ProjectTab, RytmdashApp};
 use crate::gui::{theme, widgets};
 use crate::model::names;
 use crate::model::{pattern_display_name, ProjectModel};
@@ -14,7 +14,7 @@ use crate::transfer;
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let connected = app.connected_in_port();
-    let capturing = app.capture.is_running();
+    let device_busy = app.device_busy();
     let mut jump_kit = None;
     let mut request_capture: Option<usize> = None;
     let mut open_paste = false;
@@ -94,7 +94,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                         ui,
                         model,
                         selected,
-                        !browsing && connected.is_some() && !capturing,
+                        !browsing && connected.is_some() && !device_busy,
                         &mut request_capture,
                     );
                 });
@@ -149,12 +149,9 @@ fn clipboard_banner(
                         .strong(),
                 );
                 ui.label(
-                    RichText::new(format!(
-                        "captured {}",
-                        clip_age_label(clip.captured_at_unix)
-                    ))
-                    .color(theme::TEXT_MUTED)
-                    .size(theme::FONT_META),
+                    RichText::new(format!("captured {}", epoch_ago(clip.captured_at_unix)))
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::FONT_META),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Clear").clicked() {
@@ -176,20 +173,6 @@ fn clipboard_banner(
         });
 }
 
-fn clip_age_label(captured_at_unix: u64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let secs = now.saturating_sub(captured_at_unix);
-    match secs {
-        0..=59 => "just now".to_owned(),
-        60..=3599 => format!("{}m ago", secs / 60),
-        3600..=86_399 => format!("{}h ago", secs / 3600),
-        _ => format!("{}d ago", secs / 86_400),
-    }
-}
-
 /// The paste-plan modal (PRD §30–§31): remaps, missing samples, overwrite
 /// warnings — then one named action through the backup-first pipeline.
 fn paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
@@ -202,6 +185,7 @@ fn paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
     };
     let preview = transfer::plan_paste(clip, model);
     let connected = app.connected_in_port();
+    let busy = app.device_busy();
     let mut close = false;
     let mut confirm = false;
     let mut launch: Option<Plan> = None;
@@ -286,8 +270,8 @@ fn paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
                 preview.overwrite_pattern
             ));
             if ui
-                .add_enabled(connected.is_some(), button)
-                .on_disabled_hover_text("Connect the Rytm first")
+                .add_enabled(connected.is_some() && !busy, button)
+                .on_disabled_hover_text("Connect the Rytm and let any running device task finish")
                 .clicked()
             {
                 confirm = true;

@@ -20,7 +20,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     let connected = app.connected_in_port();
     let browsing = app.is_browsing_snapshot();
     let project_sel = app.ui_state.project;
-    let can_capture = connected.is_some() && !app.capture.is_running();
+    let can_capture = connected.is_some() && !app.device_busy();
     let mut request_capture_kit: Option<usize> = None;
     let mut request_pad_assign: Option<(usize, usize)> = None;
     let mut open_kit_paste = false;
@@ -197,6 +197,7 @@ fn kit_paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
     };
     let preview = crate::transfer::plan_paste_kit(clip, model);
     let connected = app.connected_in_port();
+    let busy = app.device_busy();
     let mut close = false;
     let mut confirm = false;
     let mut launch: Option<crate::ops::Plan> = None;
@@ -266,8 +267,8 @@ fn kit_paste_modal(app: &mut RytmdashApp, ctx: &egui::Context) {
                 clip.kit_index + 1
             ));
             if ui
-                .add_enabled(connected.is_some(), button)
-                .on_disabled_hover_text("Connect the Rytm first")
+                .add_enabled(connected.is_some() && !busy, button)
+                .on_disabled_hover_text("Connect the Rytm and let any running device task finish")
                 .clicked()
             {
                 confirm = true;

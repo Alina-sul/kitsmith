@@ -38,6 +38,11 @@ const OP_DATA_COPY: u8 = 0x5B;
 /// Chunk size requested per partial data read (matches Transfer/elektroid).
 const DATA_CHUNK_BYTES: u32 = 0x2000;
 
+/// Upper bound on chunks accepted for one data download. A project slot is
+/// 2 MB (~256 chunks); anything past this means the device never raised the
+/// `last` flag, so stop instead of looping forever.
+const MAX_DATA_CHUNKS: usize = 1024;
+
 /// The data filesystem path that holds the 128 project slots.
 pub const PROJECTS_PATH: &str = "/projects";
 
@@ -171,11 +176,19 @@ impl FileClient {
             body.extend_from_slice(&chunk_seq.to_be_bytes());
             let reply = self.transact(link, &body)?;
             let chunk = parse_data_chunk(&reply)?;
+            // A backup nobody can trust is worse than a failed one: reject
+            // the whole download rather than store a corrupted payload.
+            if !chunk.data.is_empty() && chunk.crc != chunk_crc(&chunk.data) {
+                return None;
+            }
             bytes.extend_from_slice(&chunk.data);
             on_chunk(&chunk, bytes.len());
             chunk_seq = chunk_seq.wrapping_add(1);
             if chunk.last {
                 break;
+            }
+            if chunk_seq as usize > MAX_DATA_CHUNKS {
+                return None;
             }
         }
 
@@ -205,14 +218,14 @@ impl FileClient {
         if reply.get(5) != Some(&1) {
             return Err("device refused the data write".into());
         }
-        let jid = be_u32(&reply, 6);
+        let jid = try_be_u32(&reply, 6).ok_or("write-open reply too short for a job id")?;
 
         let mut sent = 0usize;
         for (chunk_seq, chunk) in payload.chunks(DATA_CHUNK_BYTES as usize).enumerate() {
             let mut body = vec![OP_DATA_WRITE_PARTIAL];
             body.extend_from_slice(&jid.to_be_bytes());
             body.extend_from_slice(&(chunk_seq as u32).to_be_bytes());
-            body.extend_from_slice(&crc32(0xFFFF_FFFF, chunk).to_be_bytes());
+            body.extend_from_slice(&chunk_crc(chunk).to_be_bytes());
             body.extend_from_slice(&(chunk.len() as u32).to_be_bytes());
             body.extend_from_slice(chunk);
             let reply = self
@@ -234,7 +247,8 @@ impl FileClient {
         if reply.get(5) != Some(&1) {
             return Err("device refused to close the data write".into());
         }
-        let received = be_u32(&reply, 10) as usize;
+        let received =
+            try_be_u32(&reply, 10).ok_or("write-close reply too short for a byte count")? as usize;
         if received != payload.len() {
             return Err(format!(
                 "device reports {received} bytes received, sent {}",
@@ -523,6 +537,14 @@ pub fn parse_data_chunk(reply: &[u8]) -> Option<DataChunk> {
     })
 }
 
+/// The chunk checksum the device speaks: standard CRC-32 (IEEE), i.e. a
+/// running register starting at `0xFFFFFFFF`, hardware-matched against AR
+/// MKII OS 1.72 (`docs/hardware-verification.md`). Named so the sending and
+/// verifying sides can never drift to different variants.
+pub fn chunk_crc(data: &[u8]) -> u32 {
+    crc32(0, data)
+}
+
 /// CRC-32 (IEEE, zlib-compatible) over `data` starting from `init` as the
 /// running value — used to check device-reported chunk CRCs. Pass 0 for the
 /// standard zlib result; the probe determines which init the device uses.
@@ -565,4 +587,11 @@ fn read_cstr(data: &[u8], pos: &mut usize) -> String {
 
 fn be_u32(data: &[u8], pos: usize) -> u32 {
     u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+}
+
+/// Bounds-checked [`be_u32`], for replies whose length was not validated up
+/// front — a short reply must be an error, never a panic on a worker thread.
+fn try_be_u32(data: &[u8], pos: usize) -> Option<u32> {
+    let field: [u8; 4] = data.get(pos..pos + 4)?.try_into().ok()?;
+    Some(u32::from_be_bytes(field))
 }

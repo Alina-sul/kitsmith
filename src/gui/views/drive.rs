@@ -89,7 +89,23 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                 ui.label("Reading directory…");
             });
         }
-        Some(entries) => {
+        Some(None) => {
+            ui.label(
+                RichText::new("The device did not answer for this folder.").color(theme::DANGER),
+            );
+            ui.label(
+                RichText::new(
+                    "+Drive names are case-sensitive, and the device ignores requests while \
+                     it is busy.",
+                )
+                .color(theme::TEXT_MUTED)
+                .size(theme::FONT_META),
+            );
+            if ui.button("Try again").clicked() {
+                app.drive.forget(&path);
+            }
+        }
+        Some(Some(entries)) => {
             let mut descend: Option<String> = None;
             let mut load: Option<String> = None;
             let loaded_paths: Vec<&str> = app
@@ -160,21 +176,28 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                 app.ui_state.drive_path = target;
             }
             if let Some(file) = load {
-                app.ui_state.load_sample_slot = first_free_sample_slot(app.model.as_ref());
-                app.ui_state.load_sample_modal = Some(file);
+                match first_free_sample_slot(app.model.as_ref()) {
+                    Some(slot) => {
+                        app.ui_state.load_sample_slot = slot;
+                        app.ui_state.load_sample_modal = Some(file);
+                    }
+                    None => app.toast(
+                        "All 127 project sample slots are loaded — free one on the device first."
+                            .to_owned(),
+                    ),
+                }
             }
         }
     }
 }
 
-/// Smallest project sample slot with nothing loaded.
-fn first_free_sample_slot(model: Option<&ProjectModel>) -> u8 {
+/// Smallest project sample slot with nothing loaded, or `None` when the
+/// project is full — never a slot that is already in use.
+fn first_free_sample_slot(model: Option<&ProjectModel>) -> Option<u8> {
     let Some(model) = model else {
-        return 1;
+        return Some(1);
     };
-    (1..=127u8)
-        .find(|slot| !model.samples.iter().any(|s| s.slot == *slot))
-        .unwrap_or(1)
+    (1..=127u8).find(|slot| !model.samples.iter().any(|s| s.slot == *slot))
 }
 
 /// Offline fallback: the +Drive files the loaded slots point at.

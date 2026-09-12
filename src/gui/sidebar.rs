@@ -123,7 +123,7 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             return;
         }
         let query = app.ui_state.project_search.to_lowercase();
-        let busy = app.fileops.is_running();
+        let busy = app.device_busy();
         let rearrange = app.ui_state.rearrange;
         for id in 1..=128u32 {
             match model.projects.iter().find(|p| p.id == id) {
@@ -328,14 +328,16 @@ fn backup_controls(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                 .map(|m| m.projects.iter().map(|p| (p.id, p.name.clone())).collect())
                 .unwrap_or_default();
             let in_port = app.connected_in_port();
-            let enabled = in_port.is_some() && !projects.is_empty();
+            let enabled = in_port.is_some() && !projects.is_empty() && !app.device_busy();
             let response = ui
                 .add_enabled(enabled, egui::Button::new("Back up all projects"))
                 .on_hover_text(
                     "Download every project's raw data into the local cache. Read-only on the \
                      device.",
                 )
-                .on_disabled_hover_text("Connect the Rytm and sync first");
+                .on_disabled_hover_text(
+                    "Connect the Rytm, sync first, and let any running device task finish",
+                );
             if response.clicked() {
                 if let Some(port) = in_port {
                     let ctx = ui.ctx().clone();
