@@ -14,7 +14,11 @@ Elektron Transfer moves files but knows nothing about slots, kits, or usage.
 
 ## Status
 
-Early research & planning. No code yet.
+M0+M1 in progress: Cargo skeleton with CI, MIDI port watching, and live Analog
+Rytm recognition (USB hotplug + MIDI Device Inquiry) in a minimal egui shell.
+
+Run it with `cargo run --release`. On the Rytm, set `GLOBAL SETTINGS → SYSTEM →
+USB CONFIG` to USB-MIDI and `MIDI CONFIG → PORT CONFIG` input/output to USB.
 
 - [Current usage flow](docs/research/current-usage-flow.md) — how AR sample/project
   management works today (mapped from the official manual) and where it hurts.
