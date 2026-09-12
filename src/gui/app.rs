@@ -114,6 +114,17 @@ pub struct UiState {
     pub rename_draft: String,
     /// Copy-project modal: (source slot, chosen destination slot).
     pub copy_modal: Option<(u32, u32)>,
+    /// Move-project modal: (source slot, chosen destination slot).
+    pub move_modal: Option<(u32, u32)>,
+    /// Swap-projects modal: (slot A, chosen slot B).
+    pub swap_modal: Option<(u32, u32)>,
+    /// Clear-slot modal: the slot + the typed slot-number confirmation.
+    pub clear_modal_slot: Option<u32>,
+    pub clear_confirm_draft: String,
+    /// Attestation checkbox shared by the slot-op modals ("the project in
+    /// this slot is not currently loaded on the device") — the active slot
+    /// is unreadable, so the user's word is the only possible guard.
+    pub slot_op_ack: bool,
     /// Load-sample modal: the +Drive path + the chosen project slot.
     pub load_sample_modal: Option<String>,
     pub load_sample_slot: u8,
@@ -549,6 +560,52 @@ impl KitsmithApp {
                 self.manifest = cache::load_project_manifest(&cache::default_dir());
                 self.raw_snapshots.remove(&dst);
                 self.raw_models.remove(&dst);
+            }
+            FileOpOutcome::Moved { src, dst, name } => {
+                if let Some(model) = self.model.as_mut() {
+                    model.projects.retain(|p| p.id != src && p.id != dst);
+                    model
+                        .projects
+                        .push(crate::model::ProjectInfo { id: dst, name });
+                    model.projects.sort_by_key(|p| p.id);
+                    let _ = cache::save(model);
+                }
+                self.local_meta.move_project_alias(src, dst);
+                self.save_local_meta();
+                self.manifest = cache::load_project_manifest(&cache::default_dir());
+                self.raw_snapshots.remove(&src);
+                self.raw_snapshots.remove(&dst);
+                self.raw_models.remove(&src);
+                self.raw_models.remove(&dst);
+            }
+            FileOpOutcome::Swapped { a, b } => {
+                if let Some(model) = self.model.as_mut() {
+                    for p in model.projects.iter_mut() {
+                        if p.id == a {
+                            p.id = b;
+                        } else if p.id == b {
+                            p.id = a;
+                        }
+                    }
+                    model.projects.sort_by_key(|p| p.id);
+                    let _ = cache::save(model);
+                }
+                self.local_meta.swap_project_aliases(a, b);
+                self.save_local_meta();
+                self.manifest = cache::load_project_manifest(&cache::default_dir());
+                for slot in [a, b] {
+                    self.raw_snapshots.remove(&slot);
+                    self.raw_models.remove(&slot);
+                }
+            }
+            FileOpOutcome::Cleared { slot } => {
+                if let Some(model) = self.model.as_mut() {
+                    model.projects.retain(|p| p.id != slot);
+                    let _ = cache::save(model);
+                }
+                self.manifest = cache::load_project_manifest(&cache::default_dir());
+                self.raw_snapshots.remove(&slot);
+                self.raw_models.remove(&slot);
             }
             FileOpOutcome::SampleLoaded(info) => {
                 let slot = info.slot;

@@ -43,8 +43,8 @@ Status: ✅ built+hardware-verified · 🔶 built, needs hardware verification �
 | Upload/restore project | FP 0x57–59 | 🧭 | write side gated on WP0 write verification |
 | **Rename project** | FP | 🔶 | built in PR #8 (rename + verify); pending merge |
 | Copy project → slot | FP 0x5a–5c or down/up | 🔶 | copy_data built; pending HW verify |
-| Delete/clear project slot | FP 0x5c | 🧭 | destructive — plan + typed confirmation |
-| **Reorder projects** (slot swap) | FP | 🧭 | move/copy/clear ops exist in protocol; verify slot-referencing side effects (globals? none known) |
+| Delete/clear project slot | FP 0x5c | 🔶 | built: mandatory pre-clear backup (abort if it fails), typed slot-number confirm, attestation checkbox; HW verify pending |
+| **Reorder projects** (move/swap) | FP 0x5a/0x5d | 🔶 | built: backup-first + byte-compare verify; raw device swap is acceptable *only because* nothing readable references project slots (the standing "reference-rewriting" rule is satisfied vacuously — the sole referrer is the device's unreadable active-project pointer, guarded by user attestation); HW verify pending |
 | Cross-project compare | RAW | 🔶 | slot-table hashes enable shared-sample view |
 
 ## Kits & Sounds

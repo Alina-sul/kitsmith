@@ -80,6 +80,30 @@ impl LocalMeta {
     pub fn clear_project_alias(&mut self, slot: u32) {
         self.projects.remove(&slot);
     }
+
+    /// Re-keys an alias after its project moved to another slot (the
+    /// fingerprint travels with it, so it stays attached to the same
+    /// content). Whatever alias the destination had is dropped — that slot
+    /// was empty on the device.
+    pub fn move_project_alias(&mut self, src: u32, dst: u32) {
+        let meta = self.projects.remove(&src);
+        self.projects.remove(&dst);
+        if let Some(meta) = meta {
+            self.projects.insert(dst, meta);
+        }
+    }
+
+    /// Swaps two slots' aliases after their projects swapped on the device.
+    pub fn swap_project_aliases(&mut self, a: u32, b: u32) {
+        let meta_a = self.projects.remove(&a);
+        let meta_b = self.projects.remove(&b);
+        if let Some(meta) = meta_a {
+            self.projects.insert(b, meta);
+        }
+        if let Some(meta) = meta_b {
+            self.projects.insert(a, meta);
+        }
+    }
 }
 
 /// Saves the store as JSON under `dir`, creating it if needed.

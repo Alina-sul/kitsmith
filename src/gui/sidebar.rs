@@ -74,7 +74,8 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.toggle_value(&mut app.ui_state.rearrange, "Rearrange")
             .on_hover_text(
-                "Shows empty slots and lets you drag a project onto one to copy it there.",
+                "Shows empty slots and lets you drag a project onto one to move it there \
+                 (copying stays one click away in the dialog).",
             );
         if app.ui_state.rearrange {
             ui.label(
@@ -89,6 +90,9 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let mut select = None;
     let mut rename_req: Option<(u32, String)> = None;
     let mut copy_req: Option<u32> = None;
+    let mut move_req: Option<u32> = None;
+    let mut swap_req: Option<u32> = None;
+    let mut clear_req: Option<u32> = None;
     let mut drop_req: Option<(u32, u32)> = None;
 
     ScrollArea::vertical().show(ui, |ui| {
@@ -154,6 +158,9 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                         &mut select,
                         &mut rename_req,
                         &mut copy_req,
+                        &mut move_req,
+                        &mut swap_req,
+                        &mut clear_req,
                     );
                 }
                 None => {
@@ -184,8 +191,31 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
         let dst = first_empty_slot(app).unwrap_or(1);
         app.ui_state.copy_modal = Some((src, dst));
     }
+    if let Some(src) = move_req {
+        let dst = first_empty_slot(app).unwrap_or(1);
+        app.ui_state.slot_op_ack = false;
+        app.ui_state.move_modal = Some((src, dst));
+    }
+    if let Some(a) = swap_req {
+        // Default the partner to the next occupied slot.
+        let b = app
+            .model
+            .as_ref()
+            .and_then(|m| m.projects.iter().map(|p| p.id).find(|&id| id != a))
+            .unwrap_or(a);
+        app.ui_state.slot_op_ack = false;
+        app.ui_state.swap_modal = Some((a, b));
+    }
+    if let Some(slot) = clear_req {
+        app.ui_state.slot_op_ack = false;
+        app.ui_state.clear_confirm_draft.clear();
+        app.ui_state.clear_modal_slot = Some(slot);
+    }
     if let Some((src, dst)) = drop_req {
-        app.ui_state.copy_modal = Some((src, dst));
+        // Rearrange means relocation: a drop opens the Move dialog (Copy
+        // stays one click away inside it).
+        app.ui_state.slot_op_ack = false;
+        app.ui_state.move_modal = Some((src, dst));
     }
 }
 
@@ -207,6 +237,9 @@ fn project_row(
     select: &mut Option<ProjectSelection>,
     rename_req: &mut Option<(u32, String)>,
     copy_req: &mut Option<u32>,
+    move_req: &mut Option<u32>,
+    swap_req: &mut Option<u32>,
+    clear_req: &mut Option<u32>,
 ) {
     let selected = app.ui_state.project == ProjectSelection::Slot(id);
     let mut row_response: Option<egui::Response> = None;
@@ -272,6 +305,27 @@ fn project_row(
             .clicked()
         {
             *copy_req = Some(id);
+            ui.close();
+        }
+        if ui
+            .add_enabled(!ops_busy, egui::Button::new("Move to empty slot…"))
+            .clicked()
+        {
+            *move_req = Some(id);
+            ui.close();
+        }
+        if ui
+            .add_enabled(!ops_busy, egui::Button::new("Swap with…"))
+            .clicked()
+        {
+            *swap_req = Some(id);
+            ui.close();
+        }
+        if ui
+            .add_enabled(!ops_busy, egui::Button::new("Clear slot…"))
+            .clicked()
+        {
+            *clear_req = Some(id);
             ui.close();
         }
     });
