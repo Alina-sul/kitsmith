@@ -63,7 +63,12 @@ pub fn data_packet(channel: u8, packet_number: u8, words: &[i16]) -> Vec<u8> {
     for &word in words {
         push_word(&mut msg, word);
     }
-    msg.resize(5 + PACKET_PAYLOAD_LEN, 0);
+    // Pad with *encoded silence*, not raw zeros: words are unsigned-offset, so
+    // a zero triplet decodes to -32768 — a full-scale DC click on the tail of
+    // any sample whose length is not a multiple of WORDS_PER_PACKET.
+    while msg.len() < 5 + PACKET_PAYLOAD_LEN {
+        push_word(&mut msg, 0);
+    }
     // Checksum: XOR of everything from 0x7E through the payload, in 7 bits.
     let checksum = msg[1..].iter().fold(0u8, |acc, &b| acc ^ b) & 0x7F;
     msg.push(checksum);

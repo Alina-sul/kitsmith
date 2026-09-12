@@ -39,11 +39,24 @@ pub enum ExecState {
 pub struct ExecutePanel {
     pub pending: Option<PendingAssign>,
     state: Arc<Mutex<ExecState>>,
-    /// True once a session backup ran successfully (plans skip re-backup).
+    /// True once a backup ran successfully for the device state we are still
+    /// looking at (plans skip re-backup). Cleared by [`Self::invalidate_backup`]
+    /// as soon as that assumption can no longer be trusted.
     backup_taken: bool,
 }
 
 impl ExecutePanel {
+    /// Forgets the session backup, so the next plan pulls a fresh one.
+    ///
+    /// The Rytm's active project can be changed on the hardware at any time,
+    /// and a backup of the *previous* project is no protection for a write to
+    /// the current one. Anything that means "the device may not be what it
+    /// was" — a re-sync, a reconnect — must call this, per the project's
+    /// never-write-without-a-fresh-backup rule.
+    pub fn invalidate_backup(&mut self) {
+        self.backup_taken = false;
+    }
+
     /// Renders the preview modal + execution state. Call every frame.
     /// Returns the report once, when a finished execution is dismissed.
     pub fn show(
@@ -68,9 +81,7 @@ impl ExecutePanel {
             }
             ExecState::Done(report) => {
                 // The session backup counts only once it actually completed.
-                if report.completed.iter().any(|line| line.contains("backup")) {
-                    self.backup_taken = true;
-                }
+                self.backup_taken |= report.backed_up;
                 let mut close = false;
                 egui::Window::new(if report.succeeded() {
                     "Done"

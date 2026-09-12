@@ -117,3 +117,32 @@ fn verification_mismatch_fails_the_step() {
     assert!(err.contains("verification failed"), "got: {err}");
     assert!(err.contains("99"));
 }
+
+#[test]
+fn report_flags_the_backup_structurally() {
+    // The GUI skips a re-backup on this flag; it must come from the step that
+    // ran, not from prose in `completed` that a reword would silently break.
+    let mut backend = MockBackend::default();
+    let plan = Plan::assign_sample_slot(0, 1, 4, false).expect("valid plan");
+    let report = execute(&plan, &mut backend, |_, _| {});
+    assert!(report.succeeded());
+    assert!(report.backed_up);
+
+    let mut backend = MockBackend::default();
+    let plan = Plan::assign_sample_slot(0, 1, 4, true).expect("valid plan");
+    let report = execute(&plan, &mut backend, |_, _| {});
+    assert!(report.succeeded());
+    assert!(!report.backed_up, "no backup step ran");
+}
+
+#[test]
+fn failed_backup_is_not_reported_as_taken() {
+    let mut backend = MockBackend {
+        fail_backup: true,
+        ..MockBackend::default()
+    };
+    let plan = Plan::assign_sample_slot(0, 1, 4, false).expect("valid plan");
+    let report = execute(&plan, &mut backend, |_, _| {});
+    assert!(!report.succeeded());
+    assert!(!report.backed_up);
+}

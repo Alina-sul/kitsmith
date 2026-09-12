@@ -14,6 +14,16 @@
 //! MSBs, bit 6 first). A decoded request is `[seq_hi, seq_lo, 0, 0, opcode,
 //! args…]`; the reply echoes the sequence at bytes 2–3 and answers with
 //! `opcode | 0x80` at byte 4, with a status byte at 5.
+//!
+//! The sequence sits at a *different offset* in each direction (0–1 outbound,
+//! 2–3 inbound). That asymmetry looks like a bug and is not: a live probe
+//! against an AR MKII (OS 1.72) drove ping → dir listings → RAM table → hash
+//! lookups → download through one client, so every call after the first ran
+//! with a non-zero sequence and still matched its reply. Do not "fix" it
+//! without re-probing hardware.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::config::FILE_REPLY_TIMEOUT;
 use crate::midi::link::MidiLink;
@@ -147,9 +157,14 @@ impl FileClient {
 /// Fills the model's sample-slot names and project list via the file
 /// protocol. Returns `false` when the device does not answer the protocol
 /// ping (the object-sysex model is still valid then).
+///
+/// Every lookup blocks up to [`FILE_REPLY_TIMEOUT`], so `cancel` is checked
+/// between them — a device that pings but ignores the lookups would otherwise
+/// hold the sync for minutes with no way out.
 pub fn enrich_model(
     link: &mut MidiLink,
     model: &mut crate::model::ProjectModel,
+    cancel: &Arc<AtomicBool>,
     mut progress: impl FnMut(&'static str, usize, usize),
 ) -> bool {
     let mut client = FileClient::new();
@@ -161,6 +176,9 @@ pub fn enrich_model(
         let used: Vec<RamSlot> = slots.into_iter().filter(|s| s.used).collect();
         model.samples.clear();
         for (i, slot) in used.iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                return true;
+            }
             progress("sample names", i + 1, used.len());
             let Ok(slot_number) = u8::try_from(slot.id) else {
                 continue;
@@ -177,6 +195,9 @@ pub fn enrich_model(
         }
     }
 
+    if cancel.load(Ordering::Relaxed) {
+        return true;
+    }
     progress("project list", 1, 1);
     if let Some(entries) = client.list_data_dir(link, PROJECTS_PATH) {
         model.projects = entries
@@ -307,24 +328,30 @@ pub fn parse_data_dir(reply: &[u8]) -> Vec<DataEntry> {
     entries
 }
 
+/// Bytes one RAM-slot-table entry occupies: `{hash: u32, size: u32, id: u16,
+/// used: u8}`.
+const RAM_SLOT_ENTRY_LEN: usize = 11;
+
 /// Parses a RAM-slot-table reply: `count: u32` at byte 5, then `count`
-/// entries of `{hash: u32, size: u32, id: u16, used: u8}`.
+/// entries of [`RAM_SLOT_ENTRY_LEN`] bytes each.
 pub fn parse_ram_slots(reply: &[u8]) -> Option<Vec<RamSlot>> {
     if reply.len() < 9 {
         return None;
     }
-    let count = be_u32(reply, 5) as usize;
+    // The count comes off the wire; trust it only as far as the reply can
+    // actually carry, so a garbled count cannot ask for a huge allocation.
+    let count = (be_u32(reply, 5) as usize).min((reply.len() - 9) / RAM_SLOT_ENTRY_LEN);
     let mut slots = Vec::with_capacity(count);
     let mut pos = 9;
     for _ in 0..count {
-        if pos + 11 > reply.len() {
+        if pos + RAM_SLOT_ENTRY_LEN > reply.len() {
             break;
         }
         let hash = be_u32(reply, pos);
         let size = be_u32(reply, pos + 4);
         let id = (u16::from(reply[pos + 8]) << 8) | u16::from(reply[pos + 9]);
         let used = reply[pos + 10] != 0;
-        pos += 11;
+        pos += RAM_SLOT_ENTRY_LEN;
         slots.push(RamSlot {
             id,
             hash,

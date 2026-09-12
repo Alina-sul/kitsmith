@@ -114,15 +114,21 @@ fn alias_editor(
         ui.horizontal(|ui| {
             let draft = app.ui_state.alias_draft.trim().to_owned();
             let unchanged = current_alias.unwrap_or_default() == draft;
-            if (ui
+            if ui
                 .add_enabled(!unchanged, egui::Button::new("Save label"))
                 .clicked()
-                || (submitted && !unchanged))
-                && !draft.is_empty()
+                || (submitted && !unchanged)
             {
+                // An emptied field clears the label — `set_project_alias`
+                // treats a blank alias as "remove", so saving it must not be
+                // silently dropped.
                 app.local_meta.set_project_alias(id, &draft, native_name);
                 app.save_local_meta();
-                app.toast(format!("Local label saved for project {id:03}"));
+                app.toast(if draft.is_empty() {
+                    format!("Local label removed from project {id:03}")
+                } else {
+                    format!("Local label saved for project {id:03}")
+                });
             }
             if current_alias.is_some() && ui.button("Remove label").clicked() {
                 app.local_meta.clear_project_alias(id);

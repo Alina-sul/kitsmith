@@ -95,10 +95,14 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                     || format!("{id:03}").contains(&query)
             })
             .collect();
-        if model.projects.is_empty() {
+        if rows.is_empty() {
             ui.label(
-                RichText::new("Project slots appear after a sync with file-protocol support.")
-                    .color(theme::TEXT_MUTED),
+                RichText::new(if model.projects.is_empty() {
+                    "Project slots appear after a sync with file-protocol support."
+                } else {
+                    "No project matches this search."
+                })
+                .color(theme::TEXT_MUTED),
             );
         }
         let mut select = None;

@@ -94,6 +94,9 @@ pub struct ExecutionReport {
     pub completed: Vec<String>,
     /// The step that failed and why, if any (nothing after it ran).
     pub failed: Option<(String, String)>,
+    /// Whether a [`OpStep::BackupProject`] step ran to completion, so the
+    /// caller can skip re-backing-up without parsing `completed` prose.
+    pub backed_up: bool,
 }
 
 impl ExecutionReport {
@@ -112,6 +115,7 @@ pub fn execute(
     let mut report = ExecutionReport {
         completed: Vec::new(),
         failed: None,
+        backed_up: false,
     };
     for (index, step) in plan.steps.iter().enumerate() {
         on_step(index, step);
@@ -124,7 +128,12 @@ pub fn execute(
             } => assign_and_verify(backend, *kit_index, *track, *slot),
         };
         match result {
-            Ok(()) => report.completed.push(step.describe()),
+            Ok(()) => {
+                if matches!(step, OpStep::BackupProject) {
+                    report.backed_up = true;
+                }
+                report.completed.push(step.describe());
+            }
             Err(e) => {
                 report.failed = Some((step.describe(), e.to_string()));
                 break;
