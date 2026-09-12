@@ -1,3 +1,3 @@
 fn main() -> eframe::Result {
-    rytmdash::run()
+    kitsmith::run()
 }

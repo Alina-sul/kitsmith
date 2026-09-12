@@ -77,6 +77,22 @@ pub fn drag_handle(ui: &mut Ui) {
     }
 }
 
+/// A small painted right-pointing triangle — the folder marker (painted, so
+/// it renders regardless of font coverage).
+pub fn folder_icon(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 12.0), Sense::hover());
+    let c = rect.center();
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(c.x - 3.0, c.y - 4.5),
+            egui::pos2(c.x + 4.0, c.y),
+            egui::pos2(c.x - 3.0, c.y + 4.5),
+        ],
+        theme::TEXT_SECONDARY,
+        Stroke::NONE,
+    ));
+}
+
 /// An uppercase section label, e.g. `PROJECTS`.
 pub fn section_label(ui: &mut Ui, text: &str) {
     ui.label(
@@ -87,13 +103,14 @@ pub fn section_label(ui: &mut Ui, text: &str) {
     );
 }
 
-/// A full-width selectable list row. Returns true when clicked.
+/// A full-width selectable list row. Returns its response (check `.clicked()`;
+/// attach `.context_menu(...)` for right-click actions).
 pub fn list_row(
     ui: &mut Ui,
     selected: bool,
     min_height: f32,
     content: impl FnOnce(&mut Ui),
-) -> bool {
+) -> Response {
     let fill = if selected {
         theme::SURFACE_ELEVATED
     } else {
@@ -125,7 +142,7 @@ pub fn list_row(
             egui::StrokeKind::Inside,
         );
     }
-    response.clicked()
+    response
 }
 
 /// Header line for an inspector group.

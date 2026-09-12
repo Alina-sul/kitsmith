@@ -1,4 +1,13 @@
-# rytmdash — software plan
+# kitsmith — software plan
+
+> **Direction update (2026-09):** the goal has grown from "move samples/kits
+> between projects" to **full Rytm management** — create/edit/save kits, scenes
+> and performance macros; play pads and kits from the app; bulk sample
+> upload/delete; rename and reorder everything renamable/reorderable; a
+> dedicated analysis area. The per-operation roadmap now lives in
+> **`docs/management-matrix.md`**; UX spec in **`docs/PRD-v2.md`** (WP0–WP17).
+> The plan below is the original v1 record — its architecture and safety rules
+> still stand.
 
 Goal (v1): connect an Analog Rytm MKII over USB, auto-recognize it, read its state,
 and present a **dashboard** where samples (first) and other project entities (next)
@@ -9,7 +18,7 @@ move between projects and the +Drive by drag & drop.
 Library + thin binary, mirroring the flows in `docs/research/current-usage-flow.md`:
 
 ```
-rytmdash/
+kitsmith/
 ├── src/main.rs            # bootstrap only
 ├── src/lib.rs             # wiring
 ├── src/midi/              # transport: port discovery, device inquiry, sysex framing,
@@ -82,8 +91,8 @@ Branch + PR per milestone, per global workflow.
   plan preview → slot allocation + (when needed) Sound reference rewrite → verify.
   Backup pull enforced before the session's first write. *Accept: sample moved
   between two projects with kit references intact, confirmed on hardware.*
-- **M6+ — more entities.** Sounds, then kits (kit+samples as one bundle), rename/
-  organize +Drive dirs, usage-based cleanup ("unload unused across all projects").
+- **M6+ — more entities.** Superseded by the full-management direction: see
+  `docs/management-matrix.md` (roadmap ledger) and `docs/PRD-v2.md` WP0–WP17.
 
 ## Open questions (resolve during M2–M3 on real hardware)
 

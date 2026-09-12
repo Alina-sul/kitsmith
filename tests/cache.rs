@@ -1,12 +1,12 @@
 //! Cache round-trip tests (against a temp directory, not the user cache).
 
+use kitsmith::cache::{load_from, save_in};
+use kitsmith::model::ProjectModel;
 use rytm_rs::RytmProject;
-use rytmdash::cache::{load_from, save_in};
-use rytmdash::model::ProjectModel;
 
 #[test]
 fn save_and_load_round_trips() {
-    let dir = std::env::temp_dir().join(format!("rytmdash-cache-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("kitsmith-cache-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
 
     let mut rytm = RytmProject::try_default().expect("default project");
@@ -27,5 +27,5 @@ fn save_and_load_round_trips() {
 
 #[test]
 fn load_from_missing_dir_is_none() {
-    assert!(load_from(std::path::Path::new("/nonexistent/rytmdash-nowhere")).is_none());
+    assert!(load_from(std::path::Path::new("/nonexistent/kitsmith-nowhere")).is_none());
 }

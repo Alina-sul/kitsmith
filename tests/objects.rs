@@ -4,7 +4,7 @@
 //! sends): `F0 00 20 3C 07 <dev_id> <obj_type> <container:2> <obj_nr> …`, with
 //! a query's command byte sitting 0x10 above its response's object type.
 
-use rytmdash::device::objects::is_reply_to;
+use kitsmith::device::objects::is_reply_to;
 
 fn query(cmd: u8, obj_nr: u8) -> Vec<u8> {
     vec![

@@ -1,6 +1,6 @@
 //! MIDI Sample Dump Standard message tests.
 
-use rytmdash::midi::sds::{
+use kitsmith::midi::sds::{
     data_packet, data_packets, dump_header, packet_count, parse_handshake, sample_name,
     unpack_word, Handshake, WORDS_PER_PACKET,
 };

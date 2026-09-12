@@ -1,6 +1,6 @@
 //! Design tokens (PRD v2 §39–§41) and the explicit dark theme.
 //!
-//! Rytmdash owns its appearance: [`apply`] forces the dark palette and the
+//! Kitsmith owns its appearance: [`apply`] forces the dark palette and the
 //! typography scale on startup regardless of the OS appearance. All colors,
 //! sizes and gaps used by the GUI live here — nowhere else.
 
@@ -84,7 +84,7 @@ pub const PAD_MAX_WIDTH: f32 = 220.0;
 pub const PAD_HEIGHT: f32 = 112.0;
 pub const PAD_GAP: f32 = 10.0;
 
-/// Applies the Rytmdash dark theme and typography scale to the context.
+/// Applies the Kitsmith dark theme and typography scale to the context.
 pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
 

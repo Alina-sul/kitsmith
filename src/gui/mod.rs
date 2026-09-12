@@ -2,18 +2,23 @@
 //! workspace views, inspectors and the plan modal.
 
 mod app;
+mod backup;
+mod drive_ctl;
 mod execute;
+mod fileops;
 mod import;
+mod project_modals;
 mod sidebar;
 mod sync;
 mod theme;
 mod top_bar;
+mod transfer_ctl;
 mod views;
 mod widgets;
 
-use app::RytmdashApp;
+use app::KitsmithApp;
 
-/// Opens the rytmdash window. Blocks until it closes.
+/// Opens the kitsmith window. Blocks until it closes.
 pub fn run() -> eframe::Result {
     // CoreMIDI delivers setup-change notifications to the runloop of the
     // thread that makes the process's FIRST CoreMIDI call. Make that call
@@ -26,12 +31,12 @@ pub fn run() -> eframe::Result {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([1024.0, 640.0])
-            .with_title("rytmdash"),
+            .with_title(crate::config::APP_NAME),
         ..Default::default()
     };
     eframe::run_native(
-        "rytmdash",
+        "kitsmith",
         options,
-        Box::new(|cc| Ok(Box::new(RytmdashApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(KitsmithApp::new(cc)))),
     )
 }

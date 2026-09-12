@@ -4,12 +4,12 @@
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, Sense, Stroke};
 
 use crate::device::detect::DeviceState;
-use crate::gui::app::{ago, Nav, ProjectTab, RytmdashApp};
+use crate::gui::app::{ago, KitsmithApp, Nav, ProjectTab};
 use crate::gui::sync::SyncStatus;
 use crate::gui::{theme, widgets};
 use crate::model::names;
 
-pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
+pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     ui.horizontal_centered(|ui| {
         let toggle = if app.ui_state.sidebar_hidden {
             "»"
@@ -28,7 +28,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
             app.ui_state.sidebar_hidden = !app.ui_state.sidebar_hidden;
         }
         ui.label(
-            RichText::new("rytmdash")
+            RichText::new("kitsmith")
                 .size(theme::FONT_SECTION + 2.0)
                 .strong(),
         );
@@ -55,7 +55,7 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
 
 /// Connected-device pill; opens Device & Diagnostics (PRD §6, not a raw
 /// MIDI-port menu).
-fn device_pill(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn device_pill(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let snapshot = app.watcher.snapshot();
     let (color, label, hover) = match &snapshot.device {
         DeviceState::Connected(info) => (theme::SUCCESS, "Analog Rytm MKII", info.describe()),
@@ -87,7 +87,7 @@ fn device_pill(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 }
 
 /// Clickable breadcrumb while inside the project workspace.
-fn breadcrumb(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn breadcrumb(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     if app.ui_state.nav != Nav::Projects {
         return;
     }
@@ -106,6 +106,7 @@ fn breadcrumb(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             ProjectTab::Kits => "Kits",
             ProjectTab::Samples => "Samples",
             ProjectTab::Patterns => "Patterns",
+            ProjectTab::SoundPool => "Sound Pool",
             ProjectTab::Overview => "Overview",
         };
         ui.label(RichText::new("/").color(theme::TEXT_MUTED));
@@ -142,7 +143,7 @@ fn breadcrumb(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 }
 
 /// The Sync control and its states (PRD §6).
-fn sync_control(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
+fn sync_control(app: &mut KitsmithApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     let in_port = app.connected_in_port();
     match app.sync.status() {
         SyncStatus::Running(progress) => {
@@ -180,7 +181,7 @@ fn sync_control(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
 }
 
 /// Partial/success state after the last sync; partial opens Diagnostics.
-fn sync_result_badge(app: &mut RytmdashApp, ui: &mut egui::Ui) {
+fn sync_result_badge(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let Some(info) = app.last_sync else {
         return;
     };

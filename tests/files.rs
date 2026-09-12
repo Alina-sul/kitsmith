@@ -1,7 +1,7 @@
 //! Elektron file-protocol framing and parser tests (synthetic fixtures
 //! built per the reverse-engineered wire format).
 
-use rytmdash::device::files::{
+use kitsmith::device::files::{
     frame, pack7, parse_data_dir, parse_hash_path, parse_ram_slots, parse_sample_dir, unframe,
     unpack7,
 };

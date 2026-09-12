@@ -1,21 +1,29 @@
 ================================================================================
-RYTMDASH — PRODUCT REQUIREMENTS & SYSTEM DESCRIPTION
+KITSMITH — PRODUCT REQUIREMENTS & SYSTEM DESCRIPTION
 ================================================================================
 Version: 2026-09-05 (branch milestone/file-protocol-read, tip of PR stack #1–#6)
-Repo: https://github.com/Alina-sul/rytmdash (private) · Language: Rust
+Repo: https://github.com/Alina-sul/kitsmith (private) · Language: Rust
 Author context: single developer (Alina-sul) + Claude Code; macOS primary.
 
 This document is self-contained: a person or LLM reading only this file should
-understand what rytmdash is, why it exists, exactly what is built today, how
+understand what kitsmith is, why it exists, exactly what is built today, how
 the code is organized, how the UI looks and behaves, which wire protocols are
 spoken, what is verified vs. assumed, and what comes next.
+
+NOTE (2026-09-12): this is a historical snapshot. The product direction has
+since expanded to FULL RYTM MANAGEMENT — kit creation/editing/saving, scenes &
+performance macros, playing pads/kits from the app, bulk sample upload/delete,
+renaming and reordering of every manageable entity, and a dedicated analysis
+area. Current sources of truth: docs/PRD-v2.md (UX spec, WP0-WP17),
+docs/management-matrix.md (entity x operation roadmap), and
+docs/hardware-verification.md (what is verified on OS 1.72).
 
 
 --------------------------------------------------------------------------------
 1. PRODUCT
 --------------------------------------------------------------------------------
 
-rytmdash is a native macOS desktop app (Rust + egui) that turns the Elektron
+kitsmith is a native macOS desktop app (Rust + egui) that turns the Elektron
 Analog Rytm MKII drum machine into something manageable from a computer:
 
   * Plug the Rytm in over USB -> the app recognizes it automatically.
@@ -44,7 +52,7 @@ The AR's data model has a 4-level indirection:
 Nothing on the device or in Elektron's official Transfer app shows "what uses
 what". Replacing or moving a sample slot silently changes/breaks every kit
 that references that number. Cross-project moves require sysex gymnastics and
-break references. rytmdash's core value = making this reference graph visible
+break references. kitsmith's core value = making this reference graph visible
 and its mutations safe.
 
 1.2 Non-goals (v1)
@@ -73,7 +81,7 @@ docs/research/protocol-ecosystem.md (in-repo).
     0xFF both appear to mean "no sample" (assumption, flagged for hardware
     verification).
   * Native sample format: 16-bit / 48 kHz / mono WAV. Transfer converts on
-    import; rytmdash does the same.
+    import; kitsmith does the same.
   * Track order (pads left->right, bottom row first):
     BD SD RS CP | BT LT MT HT | CH OH CY CB   (indices 0..11)
   * Pattern naming as shown on device: banks A..H x 16 -> "A01".."H16".
@@ -121,7 +129,7 @@ PR stack (each stacked on the previous; merge #1 first, then retarget):
     project slot names.
   * Result is distilled into ProjectModel (src/model/) — small, serde-
     serializable — and cached as JSON at
-    ~/Library/Application Support/rytmdash/active_project.json
+    ~/Library/Application Support/kitsmith/active_project.json
     so the app renders instantly on next launch (cache-first design).
   * ProjectModel contents: kits (index, name, 12 sounds each with name/
     machine/sample_slot), patterns (index -> kit_index), pool sounds,
@@ -165,7 +173,7 @@ PR stack (each stacked on the previous; merge #1 first, then retarget):
   * Two safety rules enforced IN THE FRAMEWORK:
     1. The session's first mutating plan auto-prepends BackupProject: a full
        raw-sysex pull of all kits/patterns/sounds/globals/settings written to
-       ~/Library/Application Support/rytmdash/backups/backup-<unix>-<n>.syx.
+       ~/Library/Application Support/kitsmith/backups/backup-<unix>-<n>.syx.
     2. Slot writes are verified by read-back: write kit -> re-query the kit
        -> compare; mismatch fails the step.
   * Implemented write op: AssignSampleSlot { kit, track, slot } — re-points
@@ -217,8 +225,8 @@ src/
                    SampleSlotInfo/ProjectInfo; slot_usage(); slot_from_wire()
                    (0/0xFF = SMP off); pattern_display_name(); serde for the
                    cache (new fields #[serde(default)] for compatibility).
-  cache.rs         JSON cache dir (~/Library/Application Support/rytmdash on
-                   macOS, ~/.rytmdash elsewhere); save_in/load_from take a
+  cache.rs         JSON cache dir (~/Library/Application Support/kitsmith on
+                   macOS, ~/.kitsmith elsewhere); save_in/load_from take a
                    dir for testability.
   ops/             Transactions:
     mod.rs         OpStep {BackupProject, AssignSampleSlot}, Plan (validates
@@ -231,7 +239,7 @@ src/
                    mono}), resample.rs (windowed sinc), constants.
   gui/             egui/eframe 0.35 app:
     mod.rs         run(): primes CoreMIDI on main thread, opens 720x480
-                   window "rytmdash".
+                   window "kitsmith".
     app.rs         Shell: top status bar, bottom import tray, central
                    dashboard or empty state, execute modal; collects
                    window-dropped files.
@@ -262,10 +270,10 @@ Data flow (write): drag gesture --> PendingAssign --> Plan --> preview -->
 5. UI — EXACT LOOK & INTERACTIONS
 --------------------------------------------------------------------------------
 
-Window: "rytmdash", 720x480 default, resizable; default egui dark theme.
+Window: "kitsmith", 720x480 default, resizable; default egui dark theme.
 
 Top status bar (always visible):
-  [rytmdash] | ● Elektron Analog Rytm MKII  [⟳ Sync]        ... [projects (N)] [⋯]
+  [kitsmith] | ● Elektron Analog Rytm MKII  [⟳ Sync]        ... [projects (N)] [⋯]
   * Green dot + port name when connected (hover = identity/OS version);
     spinner + "Searching for an Analog Rytm…" otherwise (hover = device
     setup instructions).
@@ -384,7 +392,7 @@ all — resampler, SDS, and file protocol are hand-written.
     MIDI CONFIG -> PORT CONFIG -> INPUT FROM / OUTPUT TO -> USB (MIDI+USB
     throttles bulk transfer).
   * First run shows the empty state (or a cached/demo model if
-    ~/Library/Application Support/rytmdash/active_project.json exists).
+    ~/Library/Application Support/kitsmith/active_project.json exists).
     Press ⟳ Sync with the device connected.
   * PR review order: #1 -> #2 -> #3 -> #4 -> #5 -> #6 (stacked; after
     merging one, GitHub retargets the next automatically).

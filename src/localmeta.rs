@@ -1,5 +1,5 @@
 //! Versioned local metadata store (PRD v2 §32–§34): labels that live in
-//! Rytmdash, not on the device.
+//! Kitsmith, not on the device.
 //!
 //! No spec'd protocol operation renames a +Drive project natively — the name
 //! is metadata inside the project data itself (elektroid's data filesystem
@@ -30,7 +30,7 @@ pub struct ProjectMeta {
     pub native_name: String,
 }
 
-/// Everything Rytmdash remembers locally about a device's contents.
+/// Everything Kitsmith remembers locally about a device's contents.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalMeta {
     pub version: u32,
@@ -101,7 +101,7 @@ pub fn load_from(dir: &Path) -> LocalMeta {
         return LocalMeta::default();
     };
     if meta.version > STORE_VERSION {
-        // Written by a newer Rytmdash — don't guess at its semantics.
+        // Written by a newer Kitsmith — don't guess at its semantics.
         return LocalMeta::default();
     }
     meta

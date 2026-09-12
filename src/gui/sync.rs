@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::device::objects::{sync_active_project, SyncOutcome, SyncProgress};
+use crate::device::objects::{sync_active_project, MissedObject, SyncOutcome, SyncProgress};
 use crate::midi::link::MidiLink;
 use crate::model::ProjectModel;
 use crate::{cache, device::detect::is_rytm_port, midi::ports};
@@ -19,7 +19,7 @@ pub enum SyncStatus {
     /// [`SyncController::take_finished`].
     Finished {
         model: ProjectModel,
-        missed: usize,
+        missed: Vec<MissedObject>,
     },
     Failed(String),
 }
@@ -48,11 +48,12 @@ impl SyncController {
         self.cancel.store(true, Ordering::Relaxed);
     }
 
-    /// If a sync finished, returns its model (resetting to idle).
-    pub fn take_finished(&self) -> Option<(ProjectModel, usize)> {
+    /// If a sync finished, returns its model + missed objects (resetting to
+    /// idle).
+    pub fn take_finished(&self) -> Option<(ProjectModel, Vec<MissedObject>)> {
         let mut status = self.status.lock().expect("sync status lock poisoned");
         if let SyncStatus::Finished { model, missed } = &*status {
-            let result = (model.clone(), *missed);
+            let result = (model.clone(), missed.clone());
             *status = SyncStatus::Idle;
             return Some(result);
         }
@@ -112,6 +113,7 @@ fn run_sync(
             // Second phase: sample-slot names + project list over the file
             // protocol. Optional — a device that ignores it leaves the model
             // valid, just without names.
+            let missed_count = missed.len();
             let _ = crate::device::files::enrich_model(
                 &mut link,
                 &mut model,
@@ -122,7 +124,7 @@ fn run_sync(
                             stage,
                             done,
                             total,
-                            missed,
+                            missed: missed_count,
                         });
                     on_change();
                 },

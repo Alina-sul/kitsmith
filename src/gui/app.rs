@@ -5,16 +5,25 @@ use std::time::Instant;
 
 use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Stroke};
 
-use crate::cache;
+use std::collections::HashMap;
+
+use crate::cache::{self, ProjectManifest};
 use crate::device::detect::DeviceState;
+use crate::device::objects::MissedObject;
+use crate::device::projfile::{self, RawProjectSnapshot};
 use crate::device::watcher::DeviceWatcher;
+use crate::gui::backup::BackupController;
+use crate::gui::drive_ctl::DriveBrowser;
 use crate::gui::execute::ExecutePanel;
+use crate::gui::fileops::{FileOpController, FileOpOutcome};
 use crate::gui::import::ImportPanel;
 use crate::gui::sync::SyncController;
+use crate::gui::transfer_ctl::{CaptureController, Captured};
 use crate::gui::views::activity::{ActivityEntry, ActivityKind};
-use crate::gui::{sidebar, theme, top_bar, views};
+use crate::gui::{project_modals, sidebar, theme, top_bar, views};
 use crate::localmeta::{self, LocalMeta};
 use crate::model::ProjectModel;
+use crate::transfer::{self, KitClipboard, PatternClipboard};
 
 /// Top-level navigation destinations (PRD §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -34,6 +43,7 @@ pub enum ProjectTab {
     Kits,
     Samples,
     Patterns,
+    SoundPool,
     Overview,
 }
 
@@ -85,6 +95,25 @@ pub struct UiState {
     /// In-progress local-label edit text and which slot it belongs to.
     pub alias_draft: String,
     pub alias_draft_slot: Option<u32>,
+    /// The paste-preview modal for a cross-project pattern transfer.
+    pub paste_modal_open: bool,
+    /// The paste-preview modal for a cross-project kit transfer.
+    pub kit_paste_modal_open: bool,
+    /// Rename-on-device modal: the slot being renamed + the draft name.
+    pub rename_modal_slot: Option<u32>,
+    pub rename_draft: String,
+    /// Copy-project modal: (source slot, chosen destination slot).
+    pub copy_modal: Option<(u32, u32)>,
+    /// Load-sample modal: the +Drive path + the chosen project slot.
+    pub load_sample_modal: Option<String>,
+    pub load_sample_slot: u8,
+    /// Current +Drive browser directory.
+    pub drive_path: String,
+    /// Pad waiting for a +Drive sample: `(kit_index, track)`. Set from the
+    /// pad's context menu; consumed after the loaded sample is assigned.
+    pub pending_pad_assign: Option<(usize, usize)>,
+    /// Sidebar "Rearrange" mode: shows empty slots and enables project drag.
+    pub rearrange: bool,
 }
 
 /// When the last sync finished and how complete it was.
@@ -94,38 +123,68 @@ pub struct SyncInfo {
     pub missed: usize,
 }
 
-pub struct RytmdashApp {
+pub struct KitsmithApp {
     pub(crate) watcher: DeviceWatcher,
     pub(crate) sync: SyncController,
     pub(crate) import: ImportPanel,
     pub(crate) execute: ExecutePanel,
     pub(crate) model: Option<ProjectModel>,
     pub(crate) local_meta: LocalMeta,
+    pub(crate) backup: BackupController,
+    pub(crate) manifest: ProjectManifest,
+    pub(crate) capture: CaptureController,
+    pub(crate) fileops: FileOpController,
+    pub(crate) drive: DriveBrowser,
+    pub(crate) clipboard: Option<PatternClipboard>,
+    pub(crate) kit_clipboard: Option<KitClipboard>,
+    /// Parsed project snapshots from raw backups (`None` = unparseable),
+    /// loaded lazily per slot.
+    pub(crate) raw_snapshots: HashMap<u32, Option<RawProjectSnapshot>>,
+    /// Full dashboard models decoded from raw backups, lazily per slot.
+    pub(crate) raw_models: HashMap<u32, Option<ProjectModel>>,
     pub(crate) ui_state: UiState,
     pub(crate) last_sync: Option<SyncInfo>,
+    /// Objects the last sync could not read (for Diagnostics).
+    pub(crate) sync_misses: Vec<MissedObject>,
+    /// Which backed-up slot the active project most likely is (heuristic
+    /// match — the device does not report the loaded project).
+    pub(crate) active_guess: Option<u32>,
     pub(crate) activity: Vec<ActivityEntry>,
     toasts: Vec<(String, Instant)>,
     /// The device port the last frame saw, to notice reconnects.
     seen_in_port: Option<String>,
 }
 
-impl RytmdashApp {
+impl KitsmithApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
-        Self {
+        let mut app = Self {
             watcher: DeviceWatcher::spawn(move || ctx.request_repaint()),
             sync: SyncController::default(),
             import: ImportPanel::default(),
             execute: ExecutePanel::default(),
             model: cache::load(),
             local_meta: localmeta::load(),
+            backup: BackupController::default(),
+            manifest: cache::load_project_manifest(&cache::default_dir()),
+            capture: CaptureController::default(),
+            fileops: FileOpController::default(),
+            drive: DriveBrowser::default(),
+            clipboard: transfer::load(),
+            kit_clipboard: transfer::load_kit(),
+            raw_snapshots: HashMap::new(),
+            raw_models: HashMap::new(),
             ui_state: UiState::default(),
             last_sync: None,
+            sync_misses: Vec::new(),
+            active_guess: None,
             activity: Vec::new(),
             toasts: Vec::new(),
             seen_in_port: None,
-        }
+        };
+        app.identify_active_project();
+        app
     }
 
     pub(crate) fn log_activity(
@@ -153,23 +212,164 @@ impl RytmdashApp {
         }
     }
 
+    /// Ensures the parsed snapshot for a backed-up project slot is cached
+    /// (reads + parses the backup file on first access).
+    pub(crate) fn ensure_raw_snapshot(&mut self, slot: u32) {
+        if self.raw_snapshots.contains_key(&slot) {
+            return;
+        }
+        let snapshot = cache::load_project_backup(&cache::default_dir(), slot)
+            .and_then(|bytes| projfile::parse_raw_project(&bytes));
+        self.raw_snapshots.insert(slot, snapshot);
+    }
+
+    /// Ensures the full dashboard model for a backed-up slot is decoded and
+    /// cached (kit + pattern records through libanalogrytm).
+    pub(crate) fn ensure_raw_model(&mut self, slot: u32) {
+        if self.raw_models.contains_key(&slot) {
+            return;
+        }
+        let known: Vec<crate::model::SampleSlotInfo> = self
+            .model
+            .as_ref()
+            .map(|m| m.samples.clone())
+            .unwrap_or_default();
+        let model = cache::load_project_backup(&cache::default_dir(), slot).and_then(|bytes| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                projfile::to_project_model(&bytes, &known).ok()
+            }))
+            .unwrap_or(None)
+        });
+        self.raw_models.insert(slot, model);
+    }
+
+    /// True when the workspace is browsing a backed-up snapshot rather than
+    /// the live/cached active project.
+    pub(crate) fn is_browsing_snapshot(&self) -> bool {
+        !matches!(self.ui_state.project, ProjectSelection::Active)
+    }
+
+    /// Builds a kit clipboard from a backed-up project (no device I/O) and
+    /// stores it for pasting.
+    pub(crate) fn copy_kit_from_backup(&mut self, slot: u32, kit_index: usize) {
+        self.ensure_raw_snapshot(slot);
+        let Some(snapshot) = self
+            .raw_snapshots
+            .get(&slot)
+            .and_then(Option::as_ref)
+            .cloned()
+        else {
+            self.toast("This project's backup is not indexed — index it first.".to_owned());
+            return;
+        };
+        let Some(bytes) = cache::load_project_backup(&cache::default_dir(), slot) else {
+            self.toast("Backup file missing — re-index this project.".to_owned());
+            return;
+        };
+        let label = crate::model::names::project_display_name(&snapshot.name, slot)
+            .text()
+            .to_owned();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            transfer::capture_kit_from_backup(&bytes, &snapshot, &label, kit_index)
+        }))
+        .unwrap_or_else(|_| Err("internal error while converting the kit".into()));
+        match result {
+            Ok(clip) => {
+                let hint = clip.source_hint.clone();
+                let _ = transfer::save_kit(&clip);
+                self.kit_clipboard = Some(clip);
+                self.toast(format!(
+                    "Copied {hint} — paste it from the target project's Kits tab"
+                ));
+            }
+            Err(e) => self.toast(format!("Copy failed: {e}")),
+        }
+    }
+
+    /// Guesses which backed-up slot the active project is, by matching kit
+    /// names and sample-slot content hashes against every raw backup. The
+    /// device gives no direct way to know; this is a clearly-labeled
+    /// heuristic, recomputed after syncs and backups.
+    pub(crate) fn identify_active_project(&mut self) {
+        self.active_guess = None;
+        if self.model.is_none() {
+            return;
+        }
+        let slots: Vec<u32> = self
+            .manifest
+            .iter()
+            .filter(|(_, info)| info.raw)
+            .map(|(slot, _)| *slot)
+            .collect();
+        let mut best: Option<(u32, usize)> = None;
+        let mut tie = false;
+        for slot in slots {
+            self.ensure_raw_snapshot(slot);
+            let (Some(model), Some(Some(snapshot))) =
+                (self.model.as_ref(), self.raw_snapshots.get(&slot))
+            else {
+                continue;
+            };
+            let mut score = 0usize;
+            for (i, kit) in model.kits.iter().enumerate() {
+                let name = kit.name.trim();
+                if !name.is_empty() && snapshot.kits.get(i).is_some_and(|k| k.name.trim() == name) {
+                    score += 2;
+                }
+            }
+            for sample in &model.samples {
+                if sample.hash != 0
+                    && snapshot
+                        .samples
+                        .iter()
+                        .any(|s| s.slot == sample.slot && s.hash == sample.hash)
+                {
+                    score += 3;
+                }
+            }
+            match &mut best {
+                Some((_, top)) if score == *top => tie = true,
+                Some((slot_ref, top)) if score > *top => {
+                    *slot_ref = slot;
+                    *top = score;
+                    tie = false;
+                }
+                None => best = Some((slot, score)),
+                _ => {}
+            }
+        }
+        if let Some((slot, score)) = best {
+            if score >= 6 && !tie {
+                self.active_guess = Some(slot);
+            }
+        }
+    }
+
     /// Pulls finished background work into app state.
     fn absorb_events(&mut self, ctx: &egui::Context) {
         if let Some((model, missed)) = self.sync.take_finished() {
             self.last_sync = Some(SyncInfo {
                 at: Instant::now(),
-                missed,
+                missed: missed.len(),
             });
-            let (kind, title) = if missed == 0 {
-                (ActivityKind::Success, "Sync complete".to_owned())
+            let (kind, title, detail) = if missed.is_empty() {
+                (ActivityKind::Success, "Sync complete".to_owned(), None)
             } else {
+                let detail = missed
+                    .iter()
+                    .map(MissedObject::describe)
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 (
                     ActivityKind::Warning,
-                    format!("Partial sync · {missed} items unavailable"),
+                    format!("Partial sync · {} items unavailable", missed.len()),
+                    Some(detail),
                 )
             };
-            self.log_activity(kind, title, None);
+            self.sync_misses = missed;
+            self.log_activity(kind, title, detail);
             self.model = Some(model);
+            self.identify_active_project();
             // A sync re-reads whatever project the hardware has loaded now,
             // which may not be the one the session backup covers.
             self.execute.invalidate_backup();
@@ -207,9 +407,124 @@ impl RytmdashApp {
             );
         }
 
+        if let Some((ok, failed)) = self.backup.take_finished() {
+            self.manifest = cache::load_project_manifest(&cache::default_dir());
+            self.raw_snapshots.clear();
+            self.raw_models.clear();
+            self.identify_active_project();
+            let (kind, title) = if failed == 0 {
+                (
+                    ActivityKind::Success,
+                    format!("Backed up {ok} projects to this computer"),
+                )
+            } else {
+                (
+                    ActivityKind::Warning,
+                    format!("Backed up {ok} projects · {failed} failed"),
+                )
+            };
+            self.toast(title.clone());
+            self.log_activity(kind, title, None);
+        }
+
+        if let Some(result) = self.capture.take_finished() {
+            match result {
+                Ok(Captured::Pattern(clip)) => {
+                    let hint = clip.source_hint.clone();
+                    self.clipboard = Some(clip);
+                    self.toast(format!("Copied {hint} — paste it in any project"));
+                    self.log_activity(
+                        ActivityKind::Success,
+                        format!("Copied {hint} to the clipboard"),
+                        None,
+                    );
+                }
+                Ok(Captured::Kit(clip)) => {
+                    let hint = clip.source_hint.clone();
+                    self.kit_clipboard = Some(clip);
+                    self.toast(format!("Copied {hint} — paste it in any project"));
+                    self.log_activity(
+                        ActivityKind::Success,
+                        format!("Copied {hint} to the clipboard"),
+                        None,
+                    );
+                }
+                Err(e) => {
+                    self.toast(format!("Capture failed: {e}"));
+                    self.log_activity(ActivityKind::Error, format!("Capture failed: {e}"), None);
+                }
+            }
+        }
+
+        if let Some(result) = self.fileops.take_finished() {
+            match result {
+                Ok((outcome, summary)) => {
+                    self.apply_file_op_outcome(outcome);
+                    self.toast(summary.clone());
+                    self.log_activity(ActivityKind::Success, summary, None);
+                }
+                Err(e) => {
+                    self.toast(format!("Operation failed: {e}"));
+                    self.log_activity(ActivityKind::Error, format!("Operation failed: {e}"), None);
+                }
+            }
+        }
+
         // Esc leaves the sample-trace state (PRD §16).
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.ui_state.kits.traced_slot = None;
+        }
+    }
+
+    /// Folds a completed file operation into the local model and caches.
+    fn apply_file_op_outcome(&mut self, outcome: FileOpOutcome) {
+        match outcome {
+            FileOpOutcome::Renamed { slot, name } => {
+                if let Some(model) = self.model.as_mut() {
+                    if let Some(p) = model.projects.iter_mut().find(|p| p.id == slot) {
+                        p.name = name;
+                    }
+                    let _ = cache::save(model);
+                }
+                self.manifest = cache::load_project_manifest(&cache::default_dir());
+                self.raw_snapshots.remove(&slot);
+                self.raw_models.remove(&slot);
+            }
+            FileOpOutcome::Copied { dst, name, .. } => {
+                if let Some(model) = self.model.as_mut() {
+                    model.projects.retain(|p| p.id != dst);
+                    model
+                        .projects
+                        .push(crate::model::ProjectInfo { id: dst, name });
+                    model.projects.sort_by_key(|p| p.id);
+                    let _ = cache::save(model);
+                }
+                self.manifest = cache::load_project_manifest(&cache::default_dir());
+                self.raw_snapshots.remove(&dst);
+                self.raw_models.remove(&dst);
+            }
+            FileOpOutcome::SampleLoaded(info) => {
+                let slot = info.slot;
+                if let Some(model) = self.model.as_mut() {
+                    model.samples.retain(|s| s.slot != slot);
+                    model.samples.push(info);
+                    model.samples.sort_by_key(|s| s.slot);
+                    let _ = cache::save(model);
+                }
+                // A pad was waiting for this sample: hand over to the
+                // assign-confirm flow (object write, backup-first).
+                if let Some((kit_index, track)) = self.ui_state.pending_pad_assign.take() {
+                    self.ui_state.nav = Nav::Projects;
+                    self.ui_state.tab = ProjectTab::Kits;
+                    self.ui_state.project = ProjectSelection::Active;
+                    self.ui_state.kits.selected_kit = Some(kit_index);
+                    self.execute.pending = Some(crate::gui::execute::PendingAssign {
+                        kit_index,
+                        track,
+                        slot,
+                    });
+                }
+            }
         }
     }
 
@@ -240,15 +555,26 @@ impl RytmdashApp {
     fn workspace(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         match self.ui_state.nav {
             Nav::Projects => views::project::show(self, ui),
-            Nav::Drive => views::drive::show(ui, self.model.as_ref()),
+            Nav::Drive => views::drive::show(self, ui),
             Nav::Import => {
                 let in_port = self.connected_in_port();
                 views::import_page::show(ui, &mut self.import, in_port.as_deref(), ctx);
             }
-            Nav::Activity => views::activity::show(ui, &self.activity, &self.sync, &self.import),
-            Nav::Diagnostics => {
-                views::diagnostics::show(ui, &self.watcher, self.model.as_ref(), self.last_sync)
-            }
+            Nav::Activity => views::activity::show(
+                ui,
+                &self.activity,
+                &self.sync,
+                &self.import,
+                &self.backup,
+                self.fileops.running_description(),
+            ),
+            Nav::Diagnostics => views::diagnostics::show(
+                ui,
+                &self.watcher,
+                self.model.as_ref(),
+                self.last_sync,
+                &self.sync_misses,
+            ),
         }
     }
 
@@ -260,7 +586,7 @@ impl RytmdashApp {
     }
 }
 
-impl eframe::App for RytmdashApp {
+impl eframe::App for KitsmithApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.absorb_events(&ctx);
@@ -301,6 +627,8 @@ impl eframe::App for RytmdashApp {
             .show(ui, |ui| {
                 self.workspace(ui, &ctx);
             });
+
+        project_modals::show(self, &ctx);
 
         // Plan preview / execution modal, if a drag landed.
         let in_port = self.connected_in_port();

@@ -44,7 +44,7 @@ pattern → kit (by slot) → Sound (in kit) → sample slot (1–127, by number
 - "Unload" removes a sample from a project slot only; the +Drive file stays.
   `PURGE ALL` / `SELECT UNUSED → UNLOAD` clear pool/slots, never +Drive files.
 
-## Implications for rytmdash
+## Implications for kitsmith
 
 - Model slots as first-class entities: `SampleSlot { index, drive_path, used_by: [Sound] }`.
 - Any cross-project move = copy file reference **and** allocate a slot **and**

@@ -1,7 +1,7 @@
 //! Display-name resolution rules (PRD v2 §33): native names win, fallbacks
 //! are deterministic, unresolved names are never fabricated.
 
-use rytmdash::model::names::{
+use kitsmith::model::names::{
     kit_display_name, project_display_name, sample_display_name, sound_display_name, track_label,
     ResolvedName,
 };

@@ -1,7 +1,7 @@
 //! Device-recognition rule tests.
 
-use rytmdash::device::detect::{is_rytm_port, DeviceInfo};
-use rytmdash::midi::inquiry::parse_identity_reply;
+use kitsmith::device::detect::{is_rytm_port, DeviceInfo};
+use kitsmith::midi::inquiry::parse_identity_reply;
 
 #[test]
 fn recognizes_rytm_port_names() {

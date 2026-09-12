@@ -43,9 +43,23 @@ pub struct ExecutePanel {
     /// looking at (plans skip re-backup). Cleared by [`Self::invalidate_backup`]
     /// as soon as that assumption can no longer be trusted.
     backup_taken: bool,
+    /// Extra guidance shown in the completion dialog of a launched plan.
+    post_note: Option<String>,
 }
 
 impl ExecutePanel {
+    /// Starts executing an externally built plan (e.g. a pattern paste).
+    pub fn launch(
+        &mut self,
+        plan: Plan,
+        in_port: String,
+        ctx: egui::Context,
+        post_note: Option<String>,
+    ) {
+        self.post_note = post_note;
+        self.spawn(plan, in_port, ctx);
+    }
+
     /// Forgets the session backup, so the next plan pulls a fresh one.
     ///
     /// The Rytm's active project can be changed on the hardware at any time,
@@ -104,12 +118,19 @@ impl ExecutePanel {
                             .color(theme::TEXT_SECONDARY),
                         );
                     }
+                    if report.succeeded() {
+                        if let Some(note) = &self.post_note {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(note).color(theme::WARNING));
+                        }
+                    }
                     if ui.button("Close").clicked() {
                         close = true;
                     }
                 });
                 if close {
                     *self.state.lock().expect("exec state lock poisoned") = ExecState::Idle;
+                    self.post_note = None;
                     return Some(report);
                 }
                 return None;

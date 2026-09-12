@@ -45,6 +45,11 @@ pub struct ProjectModel {
     /// The +Drive project slots (file protocol).
     #[serde(default)]
     pub projects: Vec<ProjectInfo>,
+    /// True when patterns were scanned for Sound Locks and sample plocks.
+    /// Old caches deserialize as `false` — the dependency data is then
+    /// incomplete and destructive conclusions must not be drawn from it.
+    #[serde(default)]
+    pub dependency_scan: bool,
 }
 
 /// One filled sample slot with its +Drive identity.
@@ -56,6 +61,10 @@ pub struct SampleSlotInfo {
     /// Full +Drive path.
     pub path: String,
     pub size: u32,
+    /// Device content hash (from the RAM slot table) — the stable sample
+    /// identity used to match slots across projects. 0 in old caches.
+    #[serde(default)]
+    pub hash: u32,
 }
 
 /// One +Drive project slot.
@@ -82,11 +91,17 @@ pub struct SoundModel {
     pub sample_slot: Option<u8>,
 }
 
-/// One pattern: its index and the kit it links to.
+/// One pattern: its index, the kit it links to, and its sample dependencies.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PatternModel {
     pub index: usize,
     pub kit_index: usize,
+    /// Sound Pool slots selected by trig Sound Locks (deduped, sorted).
+    #[serde(default)]
+    pub sound_locks: Vec<u8>,
+    /// Sample slots selected directly by trig sample plocks (deduped, sorted).
+    #[serde(default)]
+    pub plocked_sample_slots: Vec<u8>,
 }
 
 /// One use of a sample slot.
@@ -96,6 +111,37 @@ pub struct SlotUse {
     pub kit_name: String,
     pub track: usize,
     pub sound_name: String,
+}
+
+/// A Sound Pool entry that references a sample slot, plus the patterns that
+/// select it via trig Sound Locks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolUse {
+    pub pool_index: u8,
+    pub sound_name: String,
+    /// Pattern indices whose Sound Locks select this pool sound.
+    pub patterns: Vec<usize>,
+}
+
+/// Everything known to reference one sample slot (PRD §3.6: the full graph is
+/// kit tracks + Sound Pool sounds reachable via Sound Locks + sample plocks).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SlotReferences {
+    pub kit_uses: Vec<SlotUse>,
+    pub pool_uses: Vec<PoolUse>,
+    /// Pattern indices with a trig sample plock pointing at this slot.
+    pub plock_patterns: Vec<usize>,
+}
+
+impl SlotReferences {
+    pub fn is_empty(&self) -> bool {
+        self.kit_uses.is_empty() && self.pool_uses.is_empty() && self.plock_patterns.is_empty()
+    }
+
+    /// Total count of distinct references, for `N uses` labels.
+    pub fn count(&self) -> usize {
+        self.kit_uses.len() + self.pool_uses.len() + self.plock_patterns.len()
+    }
 }
 
 impl ProjectModel {
@@ -118,9 +164,35 @@ impl ProjectModel {
         let patterns = rytm
             .patterns()
             .iter()
-            .map(|p| PatternModel {
-                index: p.index(),
-                kit_index: p.kit_number(),
+            .map(|p| {
+                let mut sound_locks = Vec::new();
+                let mut plocked_sample_slots = Vec::new();
+                for track in p.tracks() {
+                    for trig in track.trigs() {
+                        // 0xFF = no Sound Lock on this step.
+                        if let Ok(lock) = u8::try_from(trig.sound_lock()) {
+                            if lock <= 127 {
+                                sound_locks.push(lock);
+                            }
+                        }
+                        // A sample plock re-points the step at another slot.
+                        if let Ok(Some(raw)) = trig.plock_get_sample_number() {
+                            if let Some(slot) = slot_from_wire(raw) {
+                                plocked_sample_slots.push(slot);
+                            }
+                        }
+                    }
+                }
+                sound_locks.sort_unstable();
+                sound_locks.dedup();
+                plocked_sample_slots.sort_unstable();
+                plocked_sample_slots.dedup();
+                PatternModel {
+                    index: p.index(),
+                    kit_index: p.kit_number(),
+                    sound_locks,
+                    plocked_sample_slots,
+                }
             })
             .collect();
         let pool_sounds = rytm
@@ -135,6 +207,7 @@ impl ProjectModel {
             // Filled by the file-protocol enrichment pass after a sync.
             samples: Vec::new(),
             projects: Vec::new(),
+            dependency_scan: true,
         }
     }
 
@@ -162,6 +235,60 @@ impl ProjectModel {
             .iter()
             .find(|s| s.slot == slot)
             .map(|s| s.name.as_str())
+    }
+
+    /// Everything known to reference `slot`: kit tracks, Sound Pool sounds
+    /// (with the patterns Sound-locking them), and trig sample plocks.
+    /// Only trustworthy for destructive decisions when [`Self::dependency_scan`]
+    /// is true — old caches lack the pattern scan.
+    pub fn slot_references(&self, slot: u8) -> SlotReferences {
+        let kit_uses = self.slot_usage().remove(&slot).unwrap_or_default();
+        let mut pool_uses = Vec::new();
+        for (index, sound) in self.pool_sounds.iter().enumerate() {
+            if sound.sample_slot != Some(slot) {
+                continue;
+            }
+            let pool_index = index as u8;
+            let patterns = self
+                .patterns
+                .iter()
+                .filter(|p| p.sound_locks.contains(&pool_index))
+                .map(|p| p.index)
+                .collect();
+            pool_uses.push(PoolUse {
+                pool_index,
+                sound_name: sound.name.clone(),
+                patterns,
+            });
+        }
+        let plock_patterns = self
+            .patterns
+            .iter()
+            .filter(|p| p.plocked_sample_slots.contains(&slot))
+            .map(|p| p.index)
+            .collect();
+        SlotReferences {
+            kit_uses,
+            pool_uses,
+            plock_patterns,
+        }
+    }
+
+    /// Whether `slot` can be unloaded without breaking anything the graph
+    /// knows about. `None` until the dependency scan is complete — never
+    /// treat incomplete data as "unused" (PRD §22).
+    pub fn safe_to_unload(&self, slot: u8) -> Option<bool> {
+        self.dependency_scan
+            .then(|| self.slot_references(slot).is_empty())
+    }
+
+    /// Pattern indices whose Sound Locks select the given pool sound.
+    pub fn patterns_sound_locking(&self, pool_index: u8) -> Vec<usize> {
+        self.patterns
+            .iter()
+            .filter(|p| p.sound_locks.contains(&pool_index))
+            .map(|p| p.index)
+            .collect()
     }
 
     /// Kits that at least one pattern links to.

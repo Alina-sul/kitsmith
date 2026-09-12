@@ -1,4 +1,4 @@
-//! rytmdash — smart dashboard for the Elektron Analog Rytm MKII.
+//! kitsmith — smart dashboard for the Elektron Analog Rytm MKII.
 //!
 //! The library hosts everything so integration tests can exercise the core:
 //! [`midi`] (transport-level sysex + port enumeration), [`device`] (recognizing
@@ -12,6 +12,7 @@ pub mod localmeta;
 pub mod midi;
 pub mod model;
 pub mod ops;
+pub mod transfer;
 
 mod gui;
 

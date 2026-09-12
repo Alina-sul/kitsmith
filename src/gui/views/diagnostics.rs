@@ -4,6 +4,7 @@
 use eframe::egui::{self, RichText, ScrollArea};
 
 use crate::device::detect::DeviceState;
+use crate::device::objects::MissedObject;
 use crate::device::watcher::DeviceWatcher;
 use crate::gui::app::{ago, page_title, SyncInfo};
 use crate::gui::{theme, widgets};
@@ -14,6 +15,7 @@ pub fn show(
     watcher: &DeviceWatcher,
     model: Option<&ProjectModel>,
     last_sync: Option<SyncInfo>,
+    sync_misses: &[MissedObject],
 ) {
     page_title(ui, "Device & Diagnostics");
     ui.add_space(theme::GAP_M);
@@ -90,11 +92,54 @@ pub fn show(
             }
         });
 
+        if !sync_misses.is_empty() {
+            widgets::inspector_group(ui, "OBJECTS THE LAST SYNC COULD NOT READ", |ui| {
+                let rejected = sync_misses.iter().filter(|m| m.got_reply).count();
+                let silent = sync_misses.len() - rejected;
+                ui.label(
+                    RichText::new(format!(
+                        "{silent} timed out (device busy / port throttled) · {rejected} answered \
+                         but could not be parsed (possible OS 1.72 structure difference)"
+                    ))
+                    .color(theme::TEXT_SECONDARY)
+                    .size(theme::FONT_META),
+                );
+                ui.add_space(4.0);
+                for miss in sync_misses {
+                    ui.label(miss.describe());
+                }
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "Timeouts: stop the sequencer, set USB CONFIG → USB-MIDI and PORT \
+                         CONFIG → USB only, then re-sync. Parse failures on the same objects \
+                         every time are a protocol finding — worth reporting.",
+                    )
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+                );
+            });
+        }
+
         widgets::inspector_group(ui, "MIDI INPUTS", |ui| {
             port_list(ui, &snapshot.ports.inputs);
         });
         widgets::inspector_group(ui, "MIDI OUTPUTS", |ui| {
             port_list(ui, &snapshot.ports.outputs);
+        });
+
+        widgets::inspector_group(ui, "ABOUT", |ui| {
+            widgets::detail_line(
+                ui,
+                crate::config::APP_NAME,
+                concat!("v", env!("CARGO_PKG_VERSION")),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(crate::config::LEGAL_DISCLAIMER)
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::FONT_META),
+            );
         });
     });
 }

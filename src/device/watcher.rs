@@ -102,7 +102,7 @@ fn inquire(port_name: &str) -> Option<IdentityReply> {
     let _in_conn = midi_in
         .connect(
             &in_port,
-            "rytmdash-inquiry",
+            "kitsmith-inquiry",
             move |_ts, msg, _| {
                 if let Some(reply) = parse_identity_reply(msg) {
                     let _ = tx.send(reply);
@@ -111,7 +111,7 @@ fn inquire(port_name: &str) -> Option<IdentityReply> {
             (),
         )
         .ok()?;
-    let mut out_conn = midi_out.connect(&out_port, "rytmdash-inquiry").ok()?;
+    let mut out_conn = midi_out.connect(&out_port, "kitsmith-inquiry").ok()?;
     out_conn.send(&device_inquiry_request()).ok()?;
 
     rx.recv_timeout(INQUIRY_TIMEOUT).ok()

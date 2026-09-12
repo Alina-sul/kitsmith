@@ -4,10 +4,10 @@ use std::f64::consts::TAU;
 use std::path::PathBuf;
 
 use hound::{SampleFormat, WavSpec, WavWriter};
-use rytmdash::audio::{convert_wav_file, resample, NATIVE_SAMPLE_RATE};
+use kitsmith::audio::{convert_wav_file, resample, NATIVE_SAMPLE_RATE};
 
 fn temp_wav(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("rytmdash-audio-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("kitsmith-audio-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
     dir.join(name)
 }

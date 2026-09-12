@@ -66,7 +66,7 @@ metadata and kit/sound structure cannot be edited over protocol 1 alone.
   no name field either. Renaming natively would mean download → patch
   unmapped bytes → re-upload of a whole project: out of bounds until the
   `.arprj` format is mapped and hardware-verified (WP11+). Until then,
-  Rytmdash offers *local labels* only (`localmeta`), per PRD §32.
+  Kitsmith offers *local labels* only (`localmeta`), per PRD §32.
 
 ## Sources
 

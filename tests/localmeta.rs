@@ -2,10 +2,10 @@
 //! changed content, and unknown store versions are ignored rather than
 //! misread.
 
-use rytmdash::localmeta::{load_from, save_in, LocalMeta};
+use kitsmith::localmeta::{load_from, save_in, LocalMeta};
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("rytmdash-localmeta-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("kitsmith-localmeta-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
