@@ -78,6 +78,14 @@ pub struct KitsState {
     pub traced_slot: Option<u8>,
     /// Hides the sample-slot rail when no track inspector is open.
     pub rail_hidden: bool,
+    /// The in-progress kit edits ("Edit kit" mode). `None` = read-only.
+    pub edit_draft: Option<crate::model::edit::KitEditDraft>,
+    /// The save-plan preview modal for the current draft.
+    pub save_modal_open: bool,
+    /// A draft whose save plan is executing; applied to the local model when
+    /// the plan's read-back verification succeeds, restored to the editor
+    /// when it fails.
+    pub pending_save: Option<crate::model::edit::KitEditDraft>,
 }
 
 /// All per-frame-persistent UI state, separate from device/model state.
@@ -373,6 +381,10 @@ impl KitsmithApp {
             // A sync re-reads whatever project the hardware has loaded now,
             // which may not be the one the session backup covers.
             self.execute.invalidate_backup();
+            // The model under an open kit-edit draft just changed; stale
+            // "current" values would make the draft lie. Start over.
+            self.ui_state.kits.edit_draft = None;
+            self.ui_state.kits.save_modal_open = false;
         }
 
         // A reconnect (or a different Rytm) invalidates the session backup for
@@ -643,6 +655,22 @@ impl eframe::App for KitsmithApp {
             };
             let detail = report.completed.join("\n");
             self.log_activity(kind, title, Some(detail));
+            if let Some(draft) = self.ui_state.kits.pending_save.take() {
+                if report.succeeded() {
+                    // The read-back verified these values on the device;
+                    // mirror them locally instead of forcing a re-sync.
+                    if let Some(model) = &mut self.model {
+                        crate::gui::kit_editor::apply_draft_to_model(model, &draft);
+                        if let Err(e) = cache::save(model) {
+                            self.toast(format!("cache write failed: {e}"));
+                        }
+                    }
+                } else {
+                    // The write did not complete — hand the edits back to
+                    // the editor so nothing the user typed is lost.
+                    self.ui_state.kits.edit_draft = Some(draft);
+                }
+            }
         }
 
         self.show_toasts(&ctx);

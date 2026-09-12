@@ -60,6 +60,12 @@ impl ExecutePanel {
         self.spawn(plan, in_port, ctx);
     }
 
+    /// Whether the session backup is still considered fresh (plans built
+    /// outside this panel need it to decide on a backup step).
+    pub fn backup_taken(&self) -> bool {
+        self.backup_taken
+    }
+
     /// Forgets the session backup, so the next plan pulls a fresh one.
     ///
     /// The Rytm's active project can be changed on the hardware at any time,

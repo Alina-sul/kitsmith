@@ -67,6 +67,7 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                 );
             });
 
+        let editing = crate::gui::kit_editor::is_editing(state, selected_kit);
         if state.selected_track.is_some() || !state.rail_hidden {
             egui::Panel::right("kit-inspector")
                 .default_size(theme::INSPECTOR_WIDTH)
@@ -74,7 +75,11 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                 .frame(Frame::new().inner_margin(Margin::symmetric(10, 4)))
                 .show(ui, |ui| {
                     if state.selected_track.is_some() {
-                        track_inspector(ui, model, state, browsing, &mut request_pad_assign);
+                        if editing {
+                            crate::gui::kit_editor::track_editor(ui, model, state);
+                        } else {
+                            track_inspector(ui, model, state, browsing, &mut request_pad_assign);
+                        }
                     } else {
                         sample_rail(ui, model, state);
                     }
@@ -96,8 +101,12 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     }
                 }
                 if let Some(kit) = model.kits.get(selected_kit) {
-                    kit_header(ui, model, kit);
+                    kit_header(ui, model, kit, browsing, state);
                     ui.add_space(theme::GAP_S);
+                    if editing {
+                        crate::gui::kit_editor::edit_bar(ui, kit, state);
+                        ui.add_space(theme::GAP_S);
+                    }
                     mode_switch(ui, state);
                     ui.add_space(theme::GAP_M);
                     egui::ScrollArea::both()
@@ -143,6 +152,7 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
         crate::transfer::clear_saved_kit();
     }
     kit_paste_modal(app, &ctx);
+    crate::gui::kit_editor::save_modal(app, &ctx);
 }
 
 /// The kit transfer clipboard banner.
@@ -445,8 +455,17 @@ fn pattern_summary(patterns: &[String], max: usize) -> String {
 
 // ---- Kit header + mode switch --------------------------------------------
 
-/// `Kit 02 · DEUIL B` with its linked-pattern summary (PRD §12).
-fn kit_header(ui: &mut egui::Ui, model: &ProjectModel, kit: &KitModel) {
+/// `Kit 02 · DEUIL B` with its linked-pattern summary (PRD §12) and the
+/// "Edit kit" entry point (WP19 — editing is an explicit mode, PRD §15's
+/// read-only inspector stays the default).
+fn kit_header(
+    ui: &mut egui::Ui,
+    model: &ProjectModel,
+    kit: &KitModel,
+    browsing: bool,
+    state: &mut crate::gui::app::KitsState,
+) {
+    let mut start_edit = false;
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(format!("Kit {:02}", kit.index + 1))
@@ -459,7 +478,38 @@ fn kit_header(ui: &mut egui::Ui, model: &ProjectModel, kit: &KitModel) {
                 .color(theme::TEXT_PRIMARY)
                 .strong(),
         );
+        ui.with_layout(
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| match &state.edit_draft {
+                Some(draft) if draft.kit_index != kit.index => {
+                    ui.add_enabled(false, egui::Button::new("Edit kit"))
+                        .on_disabled_hover_text(format!(
+                            "Finish or discard the edits on kit {:02} first",
+                            draft.kit_index + 1
+                        ));
+                }
+                Some(_) => {}
+                None => {
+                    if ui
+                        .add_enabled(!browsing, egui::Button::new("Edit kit"))
+                        .on_hover_text(
+                            "Rename the kit and tweak track parameters; changes are saved \
+                             to the device as one verified write.",
+                        )
+                        .on_disabled_hover_text(
+                            "Snapshots are read-only — load this project on the device to edit it",
+                        )
+                        .clicked()
+                    {
+                        start_edit = true;
+                    }
+                }
+            },
+        );
     });
+    if start_edit {
+        state.edit_draft = Some(crate::model::edit::KitEditDraft::new(kit.index));
+    }
     let patterns = kit_pattern_names(model, kit.index);
     ui.label(
         RichText::new(if patterns.is_empty() {

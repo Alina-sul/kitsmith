@@ -7,6 +7,7 @@ mod drive_ctl;
 mod execute;
 mod fileops;
 mod import;
+mod kit_editor;
 mod project_modals;
 mod sidebar;
 mod sync;
