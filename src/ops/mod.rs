@@ -12,8 +12,24 @@ mod live;
 pub use backend::{DeviceBackend, OpError};
 pub use live::LiveBackend;
 
+use std::path::PathBuf;
+
+use crate::analysis::DriveRefScan;
+use crate::config::DRIVE_NAME_MAX_LEN;
+use crate::device::files::{is_protected_drive_path, DriveEntry};
 use crate::model::edit::{FieldValue, KitEdit, KitField};
 use crate::model::SAMPLE_SLOT_COUNT;
+
+/// What a +Drive listing must show for one entry name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriveEntryExpect {
+    /// No entry of this name.
+    Absent,
+    /// A directory of this name.
+    Dir,
+    /// A file of this name with exactly this content identity.
+    File { hash: u32, size: u32 },
+}
 
 /// One step of a transaction.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +65,37 @@ pub enum OpStep {
     VerifyKitFields {
         kit_index: usize,
         checks: Vec<KitEdit>,
+    },
+    /// Rename/move one +Drive entry (`dst` in another directory = move).
+    /// The executor preflights with fresh listings: the source must still
+    /// match `expect` and the destination name must be free.
+    RenameDrivePath {
+        src: String,
+        dst: String,
+        expect: DriveEntryExpect,
+    },
+    /// Create a +Drive directory (preflight: the name must be free).
+    CreateDriveDir { path: String },
+    /// Delete a +Drive directory (preflight: it must list as empty —
+    /// regardless of what the device itself would refuse).
+    DeleteDriveDir { path: String },
+    /// Download a +Drive sample to a local WAV before deleting it — the only
+    /// honest backup, since nothing can re-upload it yet.
+    BackupDriveFile {
+        path: String,
+        hash: u32,
+        size: u32,
+        dest: PathBuf,
+    },
+    /// Delete one +Drive sample file (preflight: content identity unchanged
+    /// and not loaded in the active project's slot table).
+    DeleteDriveFile { path: String, hash: u32, size: u32 },
+    /// Re-list a +Drive directory and check one entry against `expect`
+    /// (the read-back half of every +Drive write).
+    VerifyDriveEntry {
+        dir: String,
+        name: String,
+        expect: DriveEntryExpect,
     },
 }
 
@@ -89,6 +136,20 @@ impl OpStep {
                 checks.len(),
                 if checks.len() == 1 { "" } else { "s" }
             ),
+            Self::RenameDrivePath { src, dst, .. } => format!("rename {src} to {dst}"),
+            Self::CreateDriveDir { path } => format!("create folder {path}"),
+            Self::DeleteDriveDir { path } => format!("delete empty folder {path}"),
+            Self::BackupDriveFile { path, dest, .. } => {
+                format!("download {path} to {} first", dest.display())
+            }
+            Self::DeleteDriveFile { path, .. } => format!("delete {path} from the +Drive"),
+            Self::VerifyDriveEntry { dir, name, expect } => match expect {
+                DriveEntryExpect::Absent => format!("re-list {dir} and verify {name} is gone"),
+                DriveEntryExpect::Dir => format!("re-list {dir} and verify folder {name} exists"),
+                DriveEntryExpect::File { .. } => {
+                    format!("re-list {dir} and verify {name} is there with unchanged content")
+                }
+            },
         }
     }
 }
@@ -160,6 +221,195 @@ impl Plan {
         });
         Ok(Self {
             title: format!("Save changes to kit {:02}", draft.kit_index + 1),
+            steps,
+        })
+    }
+
+    /// A plan that renames one +Drive entry inside its directory.
+    pub fn rename_drive_entry(
+        dir: &str,
+        entry: &DriveEntry,
+        new_name: &str,
+        backup_taken: bool,
+    ) -> Result<Self, OpError> {
+        check_drive_writable(dir, entry)?;
+        validate_drive_name(new_name)?;
+        if new_name == entry.name {
+            return Err(OpError::InvalidRequest("the name is unchanged".into()));
+        }
+        let src = drive_join(dir, &entry.name);
+        let dst = drive_join(dir, new_name);
+        let expect = entry_expect(entry);
+        let mut steps = session_backup(backup_taken);
+        steps.push(OpStep::RenameDrivePath {
+            src,
+            dst,
+            expect: expect.clone(),
+        });
+        steps.push(OpStep::VerifyDriveEntry {
+            dir: dir.to_owned(),
+            name: entry.name.clone(),
+            expect: DriveEntryExpect::Absent,
+        });
+        steps.push(OpStep::VerifyDriveEntry {
+            dir: dir.to_owned(),
+            name: new_name.to_owned(),
+            expect,
+        });
+        Ok(Self {
+            title: format!("Rename {} to {new_name}", entry.name),
+            steps,
+        })
+    }
+
+    /// A plan that moves one +Drive entry to another directory (same rename
+    /// opcode, destination path in `dst_dir`).
+    pub fn move_drive_entry(
+        src_dir: &str,
+        entry: &DriveEntry,
+        dst_dir: &str,
+        backup_taken: bool,
+    ) -> Result<Self, OpError> {
+        check_drive_writable(src_dir, entry)?;
+        if is_protected_drive_path(dst_dir) {
+            return Err(OpError::InvalidRequest(
+                "the factory tree is write-protected".into(),
+            ));
+        }
+        if src_dir == dst_dir {
+            return Err(OpError::InvalidRequest("already in this folder".into()));
+        }
+        let src = drive_join(src_dir, &entry.name);
+        if entry.is_dir && (dst_dir == src || dst_dir.starts_with(&format!("{src}/"))) {
+            return Err(OpError::InvalidRequest(
+                "cannot move a folder into itself".into(),
+            ));
+        }
+        let dst = drive_join(dst_dir, &entry.name);
+        let expect = entry_expect(entry);
+        let mut steps = session_backup(backup_taken);
+        steps.push(OpStep::RenameDrivePath {
+            src,
+            dst,
+            expect: expect.clone(),
+        });
+        steps.push(OpStep::VerifyDriveEntry {
+            dir: src_dir.to_owned(),
+            name: entry.name.clone(),
+            expect: DriveEntryExpect::Absent,
+        });
+        steps.push(OpStep::VerifyDriveEntry {
+            dir: dst_dir.to_owned(),
+            name: entry.name.clone(),
+            expect,
+        });
+        Ok(Self {
+            title: format!("Move {} to {dst_dir}", entry.name),
+            steps,
+        })
+    }
+
+    /// A plan that creates a new +Drive directory under `parent`.
+    pub fn create_drive_dir(parent: &str, name: &str, backup_taken: bool) -> Result<Self, OpError> {
+        if is_protected_drive_path(parent) {
+            return Err(OpError::InvalidRequest(
+                "the factory tree is write-protected".into(),
+            ));
+        }
+        validate_drive_name(name)?;
+        let mut steps = session_backup(backup_taken);
+        steps.push(OpStep::CreateDriveDir {
+            path: drive_join(parent, name),
+        });
+        steps.push(OpStep::VerifyDriveEntry {
+            dir: parent.to_owned(),
+            name: name.to_owned(),
+            expect: DriveEntryExpect::Dir,
+        });
+        Ok(Self {
+            title: format!("Create folder {name}"),
+            steps,
+        })
+    }
+
+    /// A plan that deletes an empty +Drive directory (the executor refuses
+    /// a non-empty one at execute time, on a fresh listing).
+    pub fn delete_drive_dir(
+        parent: &str,
+        entry: &DriveEntry,
+        backup_taken: bool,
+    ) -> Result<Self, OpError> {
+        check_drive_writable(parent, entry)?;
+        if !entry.is_dir {
+            return Err(OpError::InvalidRequest(format!(
+                "{} is a file, not a folder",
+                entry.name
+            )));
+        }
+        let mut steps = session_backup(backup_taken);
+        steps.push(OpStep::DeleteDriveDir {
+            path: drive_join(parent, &entry.name),
+        });
+        steps.push(OpStep::VerifyDriveEntry {
+            dir: parent.to_owned(),
+            name: entry.name.clone(),
+            expect: DriveEntryExpect::Absent,
+        });
+        Ok(Self {
+            title: format!("Delete folder {}", entry.name),
+            steps,
+        })
+    }
+
+    /// A plan that deletes one +Drive sample file: refuses while any known
+    /// project references the content, and downloads a local WAV copy first
+    /// (nothing can re-upload a deleted sample yet — that copy is the only
+    /// recovery path).
+    pub fn delete_drive_file(
+        parent: &str,
+        entry: &DriveEntry,
+        scan: &DriveRefScan,
+        backup_taken: bool,
+    ) -> Result<Self, OpError> {
+        check_drive_writable(parent, entry)?;
+        if entry.is_dir {
+            return Err(OpError::InvalidRequest(format!(
+                "{} is a folder — delete it as one",
+                entry.name
+            )));
+        }
+        if scan.has_references() {
+            return Err(OpError::InvalidRequest(format!(
+                "{} is used by {} sample slot{} across known projects — \
+                 unload it everywhere first",
+                entry.name,
+                scan.reference_count(),
+                if scan.reference_count() == 1 { "" } else { "s" }
+            )));
+        }
+        let path = drive_join(parent, &entry.name);
+        let dest = crate::cache::default_dir()
+            .join("deleted-samples")
+            .join(format!("{:08x}-{}.wav", entry.hash, entry.name));
+        let mut steps = session_backup(backup_taken);
+        steps.push(OpStep::BackupDriveFile {
+            path: path.clone(),
+            hash: entry.hash,
+            size: entry.size,
+            dest,
+        });
+        steps.push(OpStep::DeleteDriveFile {
+            path,
+            hash: entry.hash,
+            size: entry.size,
+        });
+        steps.push(OpStep::VerifyDriveEntry {
+            dir: parent.to_owned(),
+            name: entry.name.clone(),
+            expect: DriveEntryExpect::Absent,
+        });
+        Ok(Self {
+            title: format!("Delete {}", entry.name),
             steps,
         })
     }
@@ -266,6 +516,23 @@ pub fn execute(
             OpStep::VerifyKitFields { kit_index, checks } => {
                 verify_kit_fields(backend, *kit_index, checks)
             }
+            OpStep::RenameDrivePath { src, dst, expect } => {
+                rename_drive_path(backend, src, dst, expect)
+            }
+            OpStep::CreateDriveDir { path } => create_drive_dir(backend, path),
+            OpStep::DeleteDriveDir { path } => delete_drive_dir(backend, path),
+            OpStep::BackupDriveFile {
+                path,
+                hash,
+                size,
+                dest,
+            } => backup_drive_file(backend, path, *hash, *size, dest),
+            OpStep::DeleteDriveFile { path, hash, size } => {
+                delete_drive_file(backend, path, *hash, *size)
+            }
+            OpStep::VerifyDriveEntry { dir, name, expect } => {
+                verify_drive_entry(backend, dir, name, expect)
+            }
         };
         match result {
             Ok(()) => {
@@ -342,6 +609,235 @@ fn verify_pattern_kit_link(
         )));
     }
     Ok(())
+}
+
+// ---- +Drive step executors ------------------------------------------------
+
+/// Splits a full +Drive path into (directory, entry name).
+fn split_drive_path(path: &str) -> (String, String) {
+    match path.rsplit_once('/') {
+        Some(("", name)) => ("/".to_owned(), name.to_owned()),
+        Some((dir, name)) => (dir.to_owned(), name.to_owned()),
+        None => ("/".to_owned(), path.to_owned()),
+    }
+}
+
+/// Finds one entry by name in a fresh listing.
+fn find_entry<'a>(entries: &'a [DriveEntry], name: &str) -> Option<&'a DriveEntry> {
+    entries.iter().find(|e| e.name == name)
+}
+
+/// Checks a fresh source entry against what the plan was built from. The
+/// listing the user acted on may be stale — any mismatch stops the write.
+fn check_source_entry(entry: &DriveEntry, expect: &DriveEntryExpect) -> Result<(), OpError> {
+    if entry.write_protected {
+        return Err(OpError::InvalidRequest(format!(
+            "{} is write-protected",
+            entry.name
+        )));
+    }
+    let ok = match expect {
+        DriveEntryExpect::Absent => false,
+        DriveEntryExpect::Dir => entry.is_dir,
+        DriveEntryExpect::File { hash, size } => {
+            !entry.is_dir && entry.hash == *hash && entry.size == *size
+        }
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(OpError::InvalidRequest(format!(
+            "{} changed on the device since the browser read it — re-open the \
+             folder and retry",
+            entry.name
+        )))
+    }
+}
+
+/// Preflight + send for a rename/move.
+fn rename_drive_path(
+    backend: &mut dyn DeviceBackend,
+    src: &str,
+    dst: &str,
+    expect: &DriveEntryExpect,
+) -> Result<(), OpError> {
+    let (src_dir, src_name) = split_drive_path(src);
+    let (dst_dir, dst_name) = split_drive_path(dst);
+    let entries = backend.list_sample_dir(&src_dir)?;
+    let entry = find_entry(&entries, &src_name)
+        .ok_or_else(|| OpError::InvalidRequest(format!("{src} no longer exists on the device")))?;
+    check_source_entry(entry, expect)?;
+    let dst_entries = if dst_dir == src_dir {
+        entries
+    } else {
+        backend.list_sample_dir(&dst_dir)?
+    };
+    if find_entry(&dst_entries, &dst_name).is_some() {
+        return Err(OpError::InvalidRequest(format!(
+            "{dst} already exists — pick another name"
+        )));
+    }
+    backend.rename_sample_path(src, dst)
+}
+
+/// Preflight + send for a directory creation.
+fn create_drive_dir(backend: &mut dyn DeviceBackend, path: &str) -> Result<(), OpError> {
+    let (parent, name) = split_drive_path(path);
+    let entries = backend.list_sample_dir(&parent)?;
+    if find_entry(&entries, &name).is_some() {
+        return Err(OpError::InvalidRequest(format!(
+            "{path} already exists — pick another name"
+        )));
+    }
+    backend.create_sample_dir(path)
+}
+
+/// Preflight + send for a directory deletion: only ever an empty one.
+fn delete_drive_dir(backend: &mut dyn DeviceBackend, path: &str) -> Result<(), OpError> {
+    let contents = backend.list_sample_dir(path)?;
+    if !contents.is_empty() {
+        return Err(OpError::InvalidRequest(format!(
+            "{path} is not empty ({} item{}) — delete refused",
+            contents.len(),
+            if contents.len() == 1 { "" } else { "s" }
+        )));
+    }
+    backend.delete_sample_dir(path)
+}
+
+/// Downloads the file to `dest` (WAV + JSON sidecar) before deletion.
+fn backup_drive_file(
+    backend: &mut dyn DeviceBackend,
+    path: &str,
+    hash: u32,
+    size: u32,
+    dest: &std::path::Path,
+) -> Result<(), OpError> {
+    backend
+        .download_sample_to(path, dest, hash, size)
+        .map(|_| ())
+}
+
+/// Preflight + send for a file deletion: identity unchanged and nothing in
+/// the active project's slot table still points at the content.
+fn delete_drive_file(
+    backend: &mut dyn DeviceBackend,
+    path: &str,
+    hash: u32,
+    size: u32,
+) -> Result<(), OpError> {
+    let (dir, name) = split_drive_path(path);
+    let entries = backend.list_sample_dir(&dir)?;
+    let entry = find_entry(&entries, &name)
+        .ok_or_else(|| OpError::InvalidRequest(format!("{path} no longer exists")))?;
+    check_source_entry(entry, &DriveEntryExpect::File { hash, size })?;
+    let slots = backend.ram_sample_slots()?;
+    if slots
+        .iter()
+        .any(|s| s.used && s.hash == hash && s.size == size)
+    {
+        return Err(OpError::InvalidRequest(format!(
+            "{name} is loaded in the active project's sample slots — unload it first"
+        )));
+    }
+    backend.delete_sample_file(path)
+}
+
+/// Read-back verification of one +Drive listing entry.
+fn verify_drive_entry(
+    backend: &mut dyn DeviceBackend,
+    dir: &str,
+    name: &str,
+    expect: &DriveEntryExpect,
+) -> Result<(), OpError> {
+    let entries = backend.list_sample_dir(dir)?;
+    let entry = find_entry(&entries, name);
+    let ok = match expect {
+        DriveEntryExpect::Absent => entry.is_none(),
+        DriveEntryExpect::Dir => entry.is_some_and(|e| e.is_dir),
+        DriveEntryExpect::File { hash, size } => {
+            entry.is_some_and(|e| !e.is_dir && e.hash == *hash && e.size == *size)
+        }
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(OpError::VerificationFailed(format!(
+            "{dir}/{name}: the device listing does not show the expected result"
+        )))
+    }
+}
+
+// ---- +Drive plan helpers ----------------------------------------------------
+
+/// The session-backup prefix every mutating plan starts with.
+fn session_backup(backup_taken: bool) -> Vec<OpStep> {
+    if backup_taken {
+        Vec::new()
+    } else {
+        vec![OpStep::BackupProject]
+    }
+}
+
+/// What a fresh listing must show for `entry` after a successful move/rename.
+fn entry_expect(entry: &DriveEntry) -> DriveEntryExpect {
+    if entry.is_dir {
+        DriveEntryExpect::Dir
+    } else {
+        DriveEntryExpect::File {
+            hash: entry.hash,
+            size: entry.size,
+        }
+    }
+}
+
+/// Refuses writes into the factory tree and on write-protected entries.
+fn check_drive_writable(dir: &str, entry: &DriveEntry) -> Result<(), OpError> {
+    if is_protected_drive_path(dir) {
+        return Err(OpError::InvalidRequest(
+            "the factory tree is write-protected".into(),
+        ));
+    }
+    if entry.write_protected {
+        return Err(OpError::InvalidRequest(format!(
+            "{} is write-protected",
+            entry.name
+        )));
+    }
+    Ok(())
+}
+
+/// Validates a new +Drive file/folder name before it goes anywhere near the
+/// device: printable ASCII, no path separators, bounded length.
+fn validate_drive_name(name: &str) -> Result<(), OpError> {
+    if name.is_empty() {
+        return Err(OpError::InvalidRequest("the name is empty".into()));
+    }
+    if name.len() > DRIVE_NAME_MAX_LEN {
+        return Err(OpError::InvalidRequest(format!(
+            "the name is longer than {DRIVE_NAME_MAX_LEN} characters"
+        )));
+    }
+    if !name.is_ascii() || name.chars().any(|c| c.is_ascii_control()) {
+        return Err(OpError::InvalidRequest(
+            "the name must be printable ASCII".into(),
+        ));
+    }
+    if name.contains('/') || name == "." || name == ".." {
+        return Err(OpError::InvalidRequest(
+            "the name cannot contain '/' or be a dot path".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Joins a directory and an entry name into a full +Drive path.
+fn drive_join(dir: &str, name: &str) -> String {
+    if dir == "/" {
+        format!("/{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
 }
 
 /// Write + read-back verification for a slot assignment.

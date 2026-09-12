@@ -20,13 +20,14 @@ Status: ✅ built+hardware-verified · 🔶 built, needs hardware verification �
 | Operation | Protocol | Status | Notes |
 | --- | --- | --- | --- |
 | Browse +Drive tree | FP 0x10 | ✅ | dirs+files, hash/size/write-protect |
-| Download sample | FP | 🧭 | elektroid-proven; needed for preview + backup |
+| Download sample | FP 0x30–0x32 | 🔶 | built (open/blocks/close → WAV); feeds the pre-delete backup; HW verify pending |
 | Upload sample (single) | FP / SDS | 🔶 | SDS path built (M4), FP upload preferred; conversion to 16-bit/48k mono built |
 | **Bulk upload** | FP | 🧭 | queue through ops/ serially; per-file progress + abort |
-| **Delete sample file** | FP | 🧭 | elektroid-proven; must check no project references the hash first (cross-project scan) |
-| **Bulk delete** | FP | 🧭 | same + one plan listing every file and every affected project |
-| **Rename sample file / dir** | FP | 🧭 | elektroid-proven; hash stays → project slot tables unaffected (verify on HW) |
-| Create/delete +Drive dir | FP | 🧭 | `FACTORY/` write-protected |
+| **Delete sample file** | FP 0x20 | 🔶 | built: refscan (active + backed-up projects, blind spot stated) refuses referenced deletes; local WAV downloaded first; typed confirm; HW verify pending |
+| **Bulk delete** | FP | 🧭 | rides the same per-item Plan steps; queue UI is WP20 |
+| **Rename / move sample file** | FP 0x21 | 🔶 | built through ops/ Plans (preflight + re-list verify, hash+size must survive); HW verify pending |
+| **Rename / move directory** | FP 0x21? | 🔬 | 0x21 is only pinned for files — GUI hides dir rename/move behind the hardware probe |
+| Create/delete +Drive dir | FP 0x11/0x12 | 🔶 | built; delete only when the fresh listing is empty; `FACTORY/` triple-guarded (plan, executor, GUI); HW verify pending |
 | Load sample → project slot | FP 0x17 write / ram_load | 🔶 | built (`ram_load_slot`), pending HW verify |
 | Unload slot / purge unused | FP | 🧭 | elektroid can clear RAM slots remotely |
 | **Reorder project slots** | FP + OS | 🔬 | slot numbers are referenced by Sounds/trigs — reorder = rewrite every referrer; only via full transaction |

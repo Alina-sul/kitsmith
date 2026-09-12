@@ -1,6 +1,6 @@
 //! The real [`DeviceBackend`]: object sysex over a [`MidiLink`] via rytm-rs.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rytm_rs::prelude::*;
@@ -8,6 +8,7 @@ use rytm_rs::RytmProject;
 
 use super::{DeviceBackend, OpError};
 use crate::cache;
+use crate::device::files::{DriveEntry, FileClient, RamSlot};
 use crate::device::objects::accept_reply;
 use crate::midi::link::MidiLink;
 use crate::model::slot_from_wire;
@@ -16,6 +17,8 @@ use crate::model::slot_from_wire;
 pub struct LiveBackend {
     link: MidiLink,
     rytm: RytmProject,
+    /// File-protocol client sharing the same link (one serial conversation).
+    files: FileClient,
 }
 
 impl LiveBackend {
@@ -24,6 +27,7 @@ impl LiveBackend {
         Ok(Self {
             link,
             rytm: RytmProject::try_default().map_err(|e| OpError::Device(e.to_string()))?,
+            files: FileClient::new(),
         })
     }
 
@@ -205,6 +209,88 @@ impl DeviceBackend for LiveBackend {
                 crate::device::kit_edit::extract(*field, kit).map_err(OpError::InvalidRequest)
             })
             .collect()
+    }
+
+    fn list_sample_dir(&mut self, path: &str) -> Result<Vec<DriveEntry>, OpError> {
+        self.files
+            .list_sample_dir(&mut self.link, path)
+            .ok_or_else(|| OpError::Device(format!("listing {path} got no reply")))
+    }
+
+    fn rename_sample_path(&mut self, src: &str, dst: &str) -> Result<(), OpError> {
+        self.files
+            .rename_sample_path(&mut self.link, src, dst)
+            .map_err(OpError::Device)
+    }
+
+    fn create_sample_dir(&mut self, path: &str) -> Result<(), OpError> {
+        self.files
+            .create_sample_dir(&mut self.link, path)
+            .map_err(OpError::Device)
+    }
+
+    fn delete_sample_dir(&mut self, path: &str) -> Result<(), OpError> {
+        self.files
+            .delete_sample_dir(&mut self.link, path)
+            .map_err(OpError::Device)
+    }
+
+    fn delete_sample_file(&mut self, path: &str) -> Result<(), OpError> {
+        self.files
+            .delete_sample_file(&mut self.link, path)
+            .map_err(OpError::Device)
+    }
+
+    fn ram_sample_slots(&mut self) -> Result<Vec<RamSlot>, OpError> {
+        self.files
+            .ram_slots(&mut self.link)
+            .ok_or_else(|| OpError::Device("reading the sample-slot table got no reply".into()))
+    }
+
+    fn download_sample_to(
+        &mut self,
+        path: &str,
+        dest: &Path,
+        hash: u32,
+        size: u32,
+    ) -> Result<PathBuf, OpError> {
+        let download = self
+            .files
+            .download_sample(&mut self.link, path, |_, _| {})
+            .map_err(OpError::Device)?;
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| OpError::Device(e.to_string()))?;
+        }
+        let spec = hound::WavSpec {
+            channels: if download.stereo { 2 } else { 1 },
+            sample_rate: download.rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer =
+            hound::WavWriter::create(dest, spec).map_err(|e| OpError::Device(e.to_string()))?;
+        for pair in download.pcm_le.chunks_exact(2) {
+            writer
+                .write_sample(i16::from_le_bytes([pair[0], pair[1]]))
+                .map_err(|e| OpError::Device(e.to_string()))?;
+        }
+        writer
+            .finalize()
+            .map_err(|e| OpError::Device(e.to_string()))?;
+        // Sidecar naming what this file was, for manual recovery.
+        let sidecar = serde_json::json!({
+            "drive_path": path,
+            "hash": format!("{hash:08x}"),
+            "size": size,
+            "taken_at": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+        });
+        let bytes =
+            serde_json::to_vec_pretty(&sidecar).map_err(|e| OpError::Device(e.to_string()))?;
+        std::fs::write(dest.with_extension("json"), bytes)
+            .map_err(|e| OpError::Device(e.to_string()))?;
+        Ok(dest.to_path_buf())
     }
 
     fn read_pattern_kit_link(&mut self, pattern_index: usize) -> Result<usize, OpError> {

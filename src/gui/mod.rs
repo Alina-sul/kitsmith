@@ -4,6 +4,7 @@
 mod app;
 mod backup;
 mod drive_ctl;
+mod drive_modals;
 mod execute;
 mod fileops;
 mod import;

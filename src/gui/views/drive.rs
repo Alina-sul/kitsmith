@@ -36,7 +36,8 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     }
     let path = app.ui_state.drive_path.clone();
 
-    // Breadcrumb.
+    // Breadcrumb + folder actions.
+    let in_factory = crate::device::files::is_protected_drive_path(&path);
     ui.horizontal(|ui| {
         let mut go: Option<String> = None;
         if ui.link("+Drive").clicked() {
@@ -54,6 +55,11 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
         if let Some(target) = go {
             app.ui_state.drive_path = target;
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if !in_factory && ui.button("New folder…").clicked() {
+                app.ui_state.drive_new_folder_open = true;
+            }
+        });
     });
     match app.ui_state.pending_pad_assign {
         Some((kit_index, track)) => {
@@ -92,6 +98,9 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
         Some(entries) => {
             let mut descend: Option<String> = None;
             let mut load: Option<String> = None;
+            let mut rename: Option<crate::device::files::DriveEntry> = None;
+            let mut move_to: Option<crate::device::files::DriveEntry> = None;
+            let mut delete: Option<crate::device::files::DriveEntry> = None;
             let loaded_paths: Vec<&str> = app
                 .model
                 .as_ref()
@@ -107,6 +116,9 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     } else {
                         format!("{path}/{}", entry.name)
                     };
+                    // Factory content and write-protected entries get no
+                    // write actions at all — reads only.
+                    let writable = !in_factory && !entry.write_protected;
                     if entry.is_dir {
                         let row = widgets::list_row(ui, false, 32.0, |ui| {
                             ui.horizontal(|ui| {
@@ -116,6 +128,16 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                         });
                         if row.clicked() {
                             descend = Some(full);
+                        }
+                        if writable {
+                            row.context_menu(|ui| {
+                                // Folder rename/move waits on the hardware
+                                // probe (docs/hardware-verification.md).
+                                if ui.button("Delete empty folder…").clicked() {
+                                    delete = Some(entry.clone());
+                                    ui.close();
+                                }
+                            });
                         }
                     } else {
                         let row = widgets::list_row(ui, false, 32.0, |ui| {
@@ -152,6 +174,21 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                                 load = Some(full.clone());
                                 ui.close();
                             }
+                            if writable {
+                                ui.separator();
+                                if ui.button("Rename…").clicked() {
+                                    rename = Some(entry.clone());
+                                    ui.close();
+                                }
+                                if ui.button("Move to folder…").clicked() {
+                                    move_to = Some(entry.clone());
+                                    ui.close();
+                                }
+                                if ui.button("Delete…").clicked() {
+                                    delete = Some(entry.clone());
+                                    ui.close();
+                                }
+                            }
                         });
                     }
                 }
@@ -162,6 +199,24 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
             if let Some(file) = load {
                 app.ui_state.load_sample_slot = first_free_sample_slot(app.model.as_ref());
                 app.ui_state.load_sample_modal = Some(file);
+            }
+            if let Some(entry) = rename {
+                app.ui_state.drive_rename_draft = entry.name.clone();
+                app.ui_state.drive_rename = Some(crate::gui::drive_modals::DriveTarget {
+                    dir: path.clone(),
+                    entry,
+                });
+            }
+            if let Some(entry) = move_to {
+                app.ui_state.drive_move_dest.clear();
+                app.ui_state.drive_move = Some(crate::gui::drive_modals::DriveTarget {
+                    dir: path.clone(),
+                    entry,
+                });
+            }
+            if let Some(entry) = delete {
+                let ctx = ui.ctx().clone();
+                crate::gui::drive_modals::open_delete(app, path.clone(), entry, &ctx);
             }
         }
     }

@@ -126,6 +126,19 @@ pub struct UiState {
     pub sync_confirm: Option<usize>,
     /// Sidebar "Rearrange" mode: shows empty slots and enables project drag.
     pub rearrange: bool,
+    /// +Drive rename modal: the entry being renamed + the draft name.
+    pub drive_rename: Option<crate::gui::drive_modals::DriveTarget>,
+    pub drive_rename_draft: String,
+    /// +Drive move modal: the entry being moved + the destination draft.
+    pub drive_move: Option<crate::gui::drive_modals::DriveTarget>,
+    pub drive_move_dest: String,
+    /// +Drive new-folder modal (creates inside `drive_path`).
+    pub drive_new_folder_open: bool,
+    pub drive_new_folder_draft: String,
+    /// +Drive delete modal (entry + reference scan + typed confirmation).
+    pub drive_delete: Option<crate::gui::drive_modals::DriveDeleteModal>,
+    /// Refresh to apply when the launched +Drive plan reports success.
+    pub pending_drive: Option<crate::gui::drive_modals::DriveRefresh>,
 }
 
 /// When the last sync finished and how complete it was.
@@ -663,6 +676,7 @@ impl eframe::App for KitsmithApp {
             });
 
         project_modals::show(self, &ctx);
+        crate::gui::drive_modals::show(self, &ctx);
 
         // Plan preview / execution modal, if a drag landed.
         let in_port = self.connected_in_port();
@@ -670,6 +684,25 @@ impl eframe::App for KitsmithApp {
             .execute
             .show(&ctx, in_port.as_deref(), self.model.as_ref())
         {
+            if let Some(refresh) = self.ui_state.pending_drive.take() {
+                if report.succeeded() {
+                    for dir in &refresh.invalidate {
+                        self.drive.invalidate(dir);
+                    }
+                    // A moved/renamed file keeps its content hash, so the
+                    // loaded slot keeps resolving — mirror the new path.
+                    if let (Some((old, new)), Some(model)) = (&refresh.path_patch, &mut self.model)
+                    {
+                        for sample in model.samples.iter_mut().filter(|s| &s.path == old) {
+                            sample.path = new.clone();
+                            sample.name = new.rsplit('/').next().unwrap_or(new.as_str()).to_owned();
+                        }
+                        if let Err(e) = cache::save(model) {
+                            self.toast(format!("cache write failed: {e}"));
+                        }
+                    }
+                }
+            }
             let (kind, title) = if report.succeeded() {
                 (ActivityKind::Success, "Plan completed".to_owned())
             } else {

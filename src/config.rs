@@ -36,6 +36,11 @@ pub const SDS_RETRY_LIMIT: usize = 8;
 /// How long to wait for a file-protocol reply.
 pub const FILE_REPLY_TIMEOUT: Duration = Duration::from_millis(2000);
 
+/// Longest +Drive file/directory name Kitsmith writes. Conservative (matches
+/// what Transfer-family tools allow); the device's real limit is a pending
+/// hardware probe — see docs/hardware-verification.md.
+pub const DRIVE_NAME_MAX_LEN: usize = 32;
+
 /// Product name as shown in the window title and About section.
 pub const APP_NAME: &str = "Kitsmith";
 
