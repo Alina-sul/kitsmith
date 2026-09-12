@@ -10,6 +10,14 @@ understand what rytmdash is, why it exists, exactly what is built today, how
 the code is organized, how the UI looks and behaves, which wire protocols are
 spoken, what is verified vs. assumed, and what comes next.
 
+NOTE (2026-09-12): this is a historical snapshot. The product direction has
+since expanded to FULL RYTM MANAGEMENT — kit creation/editing/saving, scenes &
+performance macros, playing pads/kits from the app, bulk sample upload/delete,
+renaming and reordering of every manageable entity, and a dedicated analysis
+area. Current sources of truth: docs/PRD-v2.md (UX spec, WP0-WP17),
+docs/management-matrix.md (entity x operation roadmap), and
+docs/hardware-verification.md (what is verified on OS 1.72).
+
 
 --------------------------------------------------------------------------------
 1. PRODUCT

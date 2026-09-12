@@ -2627,3 +2627,67 @@ The 12-pad grid remains the musical center of the Analog Rytm experience, but it
 - partial or uncertain data is never disguised as certainty.
 
 When the product reaches the cross-project kit-transfer milestone, the user should be able to perform in seconds what currently requires a careful manual sequence of project switching, sample-slot bookkeeping and transfer utilities. That is the defining value of Rytmdash.
+
+---
+
+# ADDENDUM (2026-09-12) — FULL-MANAGEMENT DIRECTION
+
+The product goal expands from librarian to **full Rytm management**: everything
+the device allows should be creatable, editable, playable and analyzable from
+Rytmdash. The per-operation feasibility/status ledger is
+`docs/management-matrix.md`; the sound-design ground truth is the
+`ar-sound-machines` skill. WP0–WP17 stand unchanged; the following work packages
+extend them.
+
+## WP18 — Play surface (MIDI, zero write risk)
+
+Play pads from the app (notes 0–11 on channels 1–12, velocity from click/drag),
+chromatic preview of the active track, kit audition sequences that respect
+voice-pair chokes (BT/LT, MT/HT, CH/OH, CY/CB), scene switching via CC 92 and
+performance macros via CC 35–47 (sliders emulate pad pressure), track
+mute/solo/level via CC 93–95. Local WAV preview of samples works with the device
+unplugged. Live CC edits are working-state only and the UI never presents them
+as saved. Spec source: `docs/research/midi-control-map.md`.
+
+## WP19 — Kit creation and editing (the headline write)
+
+Create a kit from scratch in the app and save it to a chosen kit slot: machine
+selection per track constrained by the machine/track validity table, SRC/SMPL/
+FLTR/AMP/LFO parameter editing with musically sane defaults, FX track settings,
+sample-slot assignment from the project pool. Gate: kit object byte-level
+round-trip on OS 1.72 (already proven offline via libanalogrytm re-encode; needs
+scratch-slot hardware verification). Renaming kits and Sounds ships with this
+package. Saving to a kit slot that patterns reference is a REPLACE and must be
+labeled with the affected pattern list.
+
+## WP20 — Bulk sample operations
+
+Multi-file upload queue (extends WP8) and **bulk delete** with a cross-project
+reference scan: the plan lists every file and every project/kit that references
+its hash before anything is removed. Bulk rename of samples and directories.
+Every item is an individual ops/ Plan step — serialized, abortable, individually
+verified; one failure never misaligns the rest of the queue.
+
+## WP21 — Rename & reorder everything
+
+One consistent rename surface for projects (native, verified — WP9), kits,
+Sounds, patterns, samples and directories. Reorder for whatever is reorderable:
+project slots, kit slots, sample slots, pattern slots — always as
+reference-rewriting transactions (a slot move rewrites every referrer in the
+same plan), never raw swaps. Entities whose order the device fixes are shown as
+fixed, not silently unreorderable.
+
+## WP22 — Analysis area
+
+A dedicated read-only workspace built on the dependency graph (WP10) and the
+cross-project index (WP11): duplicate/shared samples across projects (by content
+hash), unused samples per project and +Drive-wide, storage breakdown against the
+64 MB / 127-slot / 1 GB budgets, and project-health checks (broken references,
+name gaps, empty-but-referenced slots). Zero device writes; every finding links
+to the management action that fixes it.
+
+## Sequencing note
+
+WP18 and WP22 carry no write risk and may proceed ahead of hardware write
+verification. WP19–WP21 remain behind the WP0 write gate and the
+backup-first/plan/verify pipeline without exception.
