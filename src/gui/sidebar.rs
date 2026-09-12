@@ -125,6 +125,7 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         let query = app.ui_state.project_search.to_lowercase();
         let busy = app.device_busy();
         let rearrange = app.ui_state.rearrange;
+        let mut shown = 0usize;
         for id in 1..=128u32 {
             match model.projects.iter().find(|p| p.id == id) {
                 Some(p) => {
@@ -141,6 +142,7 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                     {
                         continue;
                     }
+                    shown += 1;
                     project_row(
                         app,
                         ui,
@@ -165,6 +167,11 @@ fn project_browser(app: &mut RytmdashApp, ui: &mut egui::Ui) {
                     }
                 }
             }
+        }
+        // A search that matches nothing must say so; an empty list with no
+        // explanation reads as "the device has no projects".
+        if shown == 0 {
+            ui.label(RichText::new("No project matches this search.").color(theme::TEXT_MUTED));
         }
     });
 

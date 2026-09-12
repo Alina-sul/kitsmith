@@ -467,7 +467,7 @@ fn query_object(
     what: &str,
 ) -> Result<Vec<u8>, String> {
     link.send(&query).map_err(|e| e.to_string())?;
-    accept_reply(link, rytm).ok_or_else(|| format!("{what} query got no reply"))
+    accept_reply(link, rytm, &query).ok_or_else(|| format!("{what} query got no reply"))
 }
 
 /// Builds the paste preview against the synced target project (pure).

@@ -4,6 +4,12 @@
 //! Query → wait for the reply → feed it to `RytmProject`. The device answers
 //! on its own schedule (sysex runs on a low-priority thread in its RTOS), so
 //! every reply is awaited with a timeout and unrelated sysex is skipped.
+//!
+//! Replies are *correlated* with the query that asked for them. A reply that
+//! arrives after its query timed out is still real device data — it is fed to
+//! the project — but it must not be handed back as the answer to whatever
+//! query happens to be in flight, or `missed` under-reports and a read-back
+//! verification can pass against a stale object.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -113,7 +119,7 @@ pub fn sync_active_project(
         if link.send(&query).is_err() {
             return Ok(SyncOutcome::DeviceSilent);
         }
-        match await_reply(link, &mut rytm) {
+        match await_reply(link, &mut rytm, &query) {
             ReplyResult::Accepted => consecutive_misses = 0,
             outcome => {
                 missed.push(MissedObject {
@@ -143,56 +149,92 @@ pub fn sync_active_project(
 /// How waiting for one object's reply ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReplyResult {
-    /// A reply was accepted into the project.
+    /// The reply to this query was accepted into the project.
     Accepted,
-    /// Sysex arrived within the timeout but none of it was accepted —
-    /// the device answered, rytm-rs could not parse it.
+    /// Sysex arrived within the timeout but none of it answered the query —
+    /// the device spoke, rytm-rs could not parse it.
     ReceivedButRejected,
     /// Nothing arrived at all.
     Silent,
 }
 
-/// Waits for the reply to the last query, feeding every received sysex to the
+/// Waits for the reply to `query`, feeding every received sysex to the
 /// project, and reports how the wait ended.
-fn await_reply(link: &MidiLink, rytm: &mut RytmProject) -> ReplyResult {
+///
+/// An AR object that parses but belongs to a *different* query is a late
+/// reply to an earlier one: it is kept (the data is real) but does not end
+/// the wait, and does not count as this query having been answered.
+fn await_reply(link: &MidiLink, rytm: &mut RytmProject, query: &[u8]) -> ReplyResult {
     let deadline = std::time::Instant::now() + OBJECT_REPLY_TIMEOUT;
-    let mut received_any = false;
+    let mut rejected_any = false;
     loop {
-        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
-            return if received_any {
+        let ran_out = |rejected_any: bool| {
+            if rejected_any {
                 ReplyResult::ReceivedButRejected
             } else {
                 ReplyResult::Silent
-            };
+            }
+        };
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            return ran_out(rejected_any);
         };
         let Some(msg) = link.recv_timeout(remaining) else {
-            return if received_any {
-                ReplyResult::ReceivedButRejected
-            } else {
-                ReplyResult::Silent
-            };
+            return ran_out(rejected_any);
         };
-        received_any = true;
-        // rytm-rs can panic on objects it does not understand — treat that
-        // as a rejected reply, not an app crash.
-        let accepted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            rytm.update_from_sysex_response(&msg).is_ok()
-        }))
-        .unwrap_or(false);
-        if accepted {
+        if !apply_reply(rytm, &msg) {
+            rejected_any = true;
+            continue;
+        }
+        if is_reply_to(&msg, query) {
             return ReplyResult::Accepted;
         }
     }
 }
 
-/// Waits for one reply the project accepts and returns its raw bytes
-/// (`None` on timeout). Non-AR sysex is skipped, not fatal.
-pub fn accept_reply(link: &MidiLink, rytm: &mut RytmProject) -> Option<Vec<u8>> {
+/// Feeds one message to the project, reporting whether it was understood.
+///
+/// rytm-rs can panic on objects it does not understand — treat that as a
+/// rejected reply, not an app crash.
+fn apply_reply(rytm: &mut RytmProject, msg: &[u8]) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rytm.update_from_sysex_response(msg).is_ok()
+    }))
+    .unwrap_or(false)
+}
+
+/// Byte offsets shared by every AR object message — query, response, and
+/// write alike: `F0 00 20 3C 07 <dev_id> <obj_type> <container:2> <obj_nr> …`.
+const OBJ_TYPE_OFFSET: usize = 6;
+const OBJ_NR_OFFSET: usize = 9;
+
+/// A query's command byte is its response's object type plus this: kit
+/// `0x62`→`0x52`, sound `0x63`→`0x53`, pattern `0x64`→`0x54`, settings
+/// `0x66`→`0x56`, global `0x67`→`0x57`.
+const QUERY_CMD_BIAS: u8 = 0x10;
+
+/// True when `reply` answers `query`: same object type and object number.
+pub fn is_reply_to(reply: &[u8], query: &[u8]) -> bool {
+    let (Some(&cmd), Some(&want_nr)) = (query.get(OBJ_TYPE_OFFSET), query.get(OBJ_NR_OFFSET))
+    else {
+        return false;
+    };
+    let (Some(&kind), Some(&got_nr)) = (reply.get(OBJ_TYPE_OFFSET), reply.get(OBJ_NR_OFFSET))
+    else {
+        return false;
+    };
+    cmd.checked_sub(QUERY_CMD_BIAS) == Some(kind) && want_nr == got_nr
+}
+
+/// Waits for the reply to `query` and returns its raw bytes (`None` on
+/// timeout). Non-AR sysex is skipped; an AR object that is *not* the answer
+/// is still applied to the project (it is a late reply to an earlier query)
+/// but does not end the wait.
+pub fn accept_reply(link: &MidiLink, rytm: &mut RytmProject, query: &[u8]) -> Option<Vec<u8>> {
     let deadline = std::time::Instant::now() + OBJECT_REPLY_TIMEOUT;
     loop {
         let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
         let msg = link.recv_timeout(remaining)?;
-        if rytm.update_from_sysex_response(&msg).is_ok() {
+        if apply_reply(rytm, &msg) && is_reply_to(&msg, query) {
             return Some(msg);
         }
     }

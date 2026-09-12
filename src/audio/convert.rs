@@ -50,6 +50,17 @@ impl fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
+/// Largest integer sample magnitude for a bit depth, as an f64 divisor.
+///
+/// `bits_per_sample` comes from the file: hound validates it for plain `fmt`
+/// chunks but copies `wValidBitsPerSample` through unchecked for
+/// WAVE_FORMAT_EXTENSIBLE, so a non-standard header can present a depth of 0
+/// or well past 32. Clamping keeps the shift in range instead of panicking.
+fn int_full_scale(bits_per_sample: u16) -> f64 {
+    let bits = bits_per_sample.clamp(1, 32);
+    f64::from(1u32 << (bits - 1))
+}
+
 /// Converts a WAV file (any rate, channel count, int/float format) to
 /// 16-bit / 48 kHz / mono — the Rytm's native sample format.
 pub fn convert_wav_file(path: &Path) -> Result<ConvertedSample, ConvertError> {
@@ -63,7 +74,7 @@ pub fn convert_wav_file(path: &Path) -> Result<ConvertedSample, ConvertError> {
             .map(|s| s.map(f64::from))
             .collect::<Result<_, _>>(),
         SampleFormat::Int => {
-            let scale = f64::from(1u32 << (spec.bits_per_sample - 1));
+            let scale = int_full_scale(spec.bits_per_sample);
             reader
                 .samples::<i32>()
                 .map(|s| s.map(|v| f64::from(v) / scale))

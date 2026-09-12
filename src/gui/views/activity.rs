@@ -80,16 +80,26 @@ pub fn show(
     }
     for item in import.items() {
         let guard = item.lock().expect("import item lock poisoned");
-        if let ImportState::Uploading(p) = &guard.state {
-            anything_running = true;
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(format!("Uploading {}", guard.sample.name));
-                ui.label(
-                    RichText::new(format!("{}/{} packets", p.packets_sent, p.packets_total))
-                        .color(theme::TEXT_SECONDARY),
-                );
-            });
+        match &guard.state {
+            ImportState::Converting => {
+                anything_running = true;
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(format!("Converting {}", guard.sample.name));
+                });
+            }
+            ImportState::Uploading(p) => {
+                anything_running = true;
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(format!("Uploading {}", guard.sample.name));
+                    ui.label(
+                        RichText::new(format!("{}/{} packets", p.packets_sent, p.packets_total))
+                            .color(theme::TEXT_SECONDARY),
+                    );
+                });
+            }
+            _ => {}
         }
     }
     if !anything_running {
