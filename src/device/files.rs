@@ -128,11 +128,15 @@ pub struct DataChunk {
     pub data: Vec<u8>,
 }
 
-/// Stateful client: owns the request sequence counter.
+/// Request sequence numbers come from one process-wide counter, so replies
+/// can never cross-match between concurrent clients on the same port (e.g.
+/// the +Drive browser and a running ops plan): `transact` matches replies by
+/// (seq, opcode), and distinct clients now never share a seq.
+static NEXT_SEQ: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+/// Stateful file-protocol client.
 #[derive(Default)]
-pub struct FileClient {
-    seq: u16,
-}
+pub struct FileClient {}
 
 impl FileClient {
     pub fn new() -> Self {
@@ -243,7 +247,7 @@ impl FileClient {
         if reply.get(5) != Some(&1) {
             return Err("device refused the data write".into());
         }
-        let jid = be_u32(&reply, 6);
+        let jid = be_u32_checked(&reply, 6).ok_or("write-open reply came back short")?;
 
         let mut sent = 0usize;
         for (chunk_seq, chunk) in payload.chunks(DATA_CHUNK_BYTES as usize).enumerate() {
@@ -272,7 +276,8 @@ impl FileClient {
         if reply.get(5) != Some(&1) {
             return Err("device refused to close the data write".into());
         }
-        let received = be_u32(&reply, 10) as usize;
+        let received =
+            be_u32_checked(&reply, 10).ok_or("write-close reply came back short")? as usize;
         if received != payload.len() {
             return Err(format!(
                 "device reports {received} bytes received, sent {}",
@@ -375,44 +380,60 @@ impl FileClient {
             Some(&2) => return Err("the device does not serve factory samples".into()),
             _ => return Err("device refused to open the sample for reading".into()),
         }
-        let id = be_u32(&reply, 6);
-        let total = be_u32(&reply, 10) as usize;
+        let id = be_u32_checked(&reply, 6).ok_or("sample-open reply came back short")?;
+        let total = be_u32_checked(&reply, 10).ok_or("sample-open reply came back short")? as usize;
         if total < SAMPLE_FILE_HEADER_LEN {
+            // Leave nothing open on the device before bailing.
+            self.close_sample_read(link, id);
             return Err(format!(
                 "sample reports only {total} bytes — not a sample file"
             ));
         }
 
         let mut raw = Vec::with_capacity(total);
-        while raw.len() < total {
+        let result = loop {
+            if raw.len() >= total {
+                break Ok(());
+            }
             let req = (total - raw.len()).min(SAMPLE_READ_BLOCK_BYTES as usize);
             let mut body = vec![OP_SAMPLE_READ_BLOCK];
             body.extend_from_slice(&id.to_be_bytes());
             body.extend_from_slice(&(req as u32).to_be_bytes());
             body.extend_from_slice(&(raw.len() as u32).to_be_bytes());
-            let reply = self
-                .transact(link, &body)
-                .ok_or("sample-read got no reply")?;
-            expect_ok(&reply, "read a sample block")?;
-            let chunk = reply
-                .get(SAMPLE_READ_PAYLOAD_OFFSET..SAMPLE_READ_PAYLOAD_OFFSET + req)
-                .ok_or("sample block came back short")?;
+            let Some(reply) = self.transact(link, &body) else {
+                break Err("sample-read got no reply".to_owned());
+            };
+            if let Err(e) = expect_ok(&reply, "read a sample block") {
+                break Err(e);
+            }
+            let Some(chunk) =
+                reply.get(SAMPLE_READ_PAYLOAD_OFFSET..SAMPLE_READ_PAYLOAD_OFFSET + req)
+            else {
+                break Err("sample block came back short".to_owned());
+            };
             raw.extend_from_slice(chunk);
             progress(raw.len(), total);
-        }
+        };
 
+        // Always close the read job — a mid-transfer failure must not leave
+        // it open (whether the device would refuse the next open is unknown).
+        self.close_sample_read(link, id);
+        result?;
+        parse_sample_file(&raw)
+    }
+
+    /// Best-effort close of a sample read job (failure doesn't invalidate
+    /// already-received bytes).
+    fn close_sample_read(&mut self, link: &mut MidiLink, id: u32) {
         let mut body = vec![OP_SAMPLE_READ_CLOSE];
         body.extend_from_slice(&id.to_be_bytes());
-        // Close failure doesn't invalidate already-received bytes.
         let _ = self.transact(link, &body);
-        parse_sample_file(&raw)
     }
 
     /// Sends `body` (opcode + args) and waits for its matching reply,
     /// returning the decoded reply message.
     fn transact(&mut self, link: &mut MidiLink, body: &[u8]) -> Option<Vec<u8>> {
-        let seq = self.seq;
-        self.seq = self.seq.wrapping_add(1);
+        let seq = NEXT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut msg = vec![(seq >> 8) as u8, (seq & 0xFF) as u8, 0, 0];
         msg.extend_from_slice(body);
         link.send(&frame(&msg)).ok()?;
@@ -525,7 +546,10 @@ fn expect_ok(reply: &[u8], what: &str) -> Result<(), String> {
     }
 }
 
-/// Splits a downloaded sample file into header fields + LE PCM.
+/// Splits a downloaded sample file into header fields + LE PCM. The header's
+/// own byte-size field must account for the received PCM exactly — a wrong
+/// payload offset or a short block would otherwise become a silently corrupt
+/// backup WAV, discovered only when it is needed.
 /// Public for offline tests against synthetic payloads.
 pub fn parse_sample_file(raw: &[u8]) -> Result<SampleDownload, String> {
     if raw.len() < SAMPLE_FILE_HEADER_LEN {
@@ -535,8 +559,16 @@ pub fn parse_sample_file(raw: &[u8]) -> Result<SampleDownload, String> {
         ));
     }
     let stereo = raw[1] != 0;
+    let declared = be_u32(raw, 4) as usize;
     let rate = be_u32(raw, 8);
     let wire_pcm = &raw[SAMPLE_FILE_HEADER_LEN..];
+    if declared != wire_pcm.len() {
+        return Err(format!(
+            "sample header declares {declared} PCM bytes but {} were received — \
+             refusing to store a corrupt backup",
+            wire_pcm.len()
+        ));
+    }
     let mut pcm_le = Vec::with_capacity(wire_pcm.len());
     for pair in wire_pcm.chunks_exact(2) {
         pcm_le.push(pair[1]);
@@ -762,6 +794,13 @@ fn read_cstr(data: &[u8], pos: &mut usize) -> String {
     let s = data[start..*pos].iter().map(|&b| b as char).collect();
     *pos = (*pos + 1).min(data.len());
     s
+}
+
+/// [`be_u32`] with a bounds check, for replies whose length is not
+/// guaranteed past the status byte.
+fn be_u32_checked(data: &[u8], pos: usize) -> Option<u32> {
+    let bytes: [u8; 4] = data.get(pos..pos + 4)?.try_into().ok()?;
+    Some(u32::from_be_bytes(bytes))
 }
 
 fn be_u32(data: &[u8], pos: usize) -> u32 {

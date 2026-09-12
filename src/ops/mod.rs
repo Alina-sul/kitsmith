@@ -276,6 +276,17 @@ impl Plan {
                 "the factory tree is write-protected".into(),
             ));
         }
+        // Free-text destinations must be well-formed absolute folder paths;
+        // "list of a nonexistent path" is only known to time out, so refuse
+        // the malformed ones before they get near the device.
+        if !dst_dir.starts_with('/')
+            || (dst_dir != "/" && dst_dir.ends_with('/'))
+            || dst_dir.contains("//")
+        {
+            return Err(OpError::InvalidRequest(
+                "the destination must be an absolute folder path like /SAMPLES/KICKS".into(),
+            ));
+        }
         if src_dir == dst_dir {
             return Err(OpError::InvalidRequest("already in this folder".into()));
         }
@@ -380,8 +391,9 @@ impl Plan {
         }
         if scan.has_references() {
             return Err(OpError::InvalidRequest(format!(
-                "{} is used by {} sample slot{} across known projects — \
-                 unload it everywhere first",
+                "{} is still used by {} sample slot{} in known projects — \
+                 Kitsmith won't delete it while projects reference it; remove \
+                 it from those projects on the device first",
                 entry.name,
                 scan.reference_count(),
                 if scan.reference_count() == 1 { "" } else { "s" }
@@ -627,6 +639,14 @@ fn find_entry<'a>(entries: &'a [DriveEntry], name: &str) -> Option<&'a DriveEntr
     entries.iter().find(|e| e.name == name)
 }
 
+/// Case-insensitive lookup for collision checks: the device filesystem's
+/// case behavior is unresolved (see the /incoming vs INCOMING finding in
+/// docs/hardware-verification.md), so a name that differs only by case is
+/// conservatively treated as taken — a wrong refusal beats an overwrite.
+fn find_entry_ci<'a>(entries: &'a [DriveEntry], name: &str) -> Option<&'a DriveEntry> {
+    entries.iter().find(|e| e.name.eq_ignore_ascii_case(name))
+}
+
 /// Checks a fresh source entry against what the plan was built from. The
 /// listing the user acted on may be stale — any mismatch stops the write.
 fn check_source_entry(entry: &DriveEntry, expect: &DriveEntryExpect) -> Result<(), OpError> {
@@ -670,11 +690,23 @@ fn rename_drive_path(
     let dst_entries = if dst_dir == src_dir {
         entries
     } else {
-        backend.list_sample_dir(&dst_dir)?
+        // A mistyped destination surfaces here as a transport-level failure;
+        // say what it means, not which opcode timed out.
+        backend.list_sample_dir(&dst_dir).map_err(|_| {
+            OpError::InvalidRequest(format!(
+                "the folder {dst_dir} was not found on the +Drive — check the \
+                 spelling or create it first; nothing was moved"
+            ))
+        })?
     };
-    if find_entry(&dst_entries, &dst_name).is_some() {
+    // Skip the source itself so a pure case-change rename stays possible
+    // once the probe settles case semantics; any OTHER case-variant is a
+    // collision.
+    if dst_entries.iter().any(|e| {
+        e.name.eq_ignore_ascii_case(&dst_name) && !(dst_dir == src_dir && e.name == src_name)
+    }) {
         return Err(OpError::InvalidRequest(format!(
-            "{dst} already exists — pick another name"
+            "{dst} already exists (or differs only by case) — pick another name"
         )));
     }
     backend.rename_sample_path(src, dst)
@@ -684,9 +716,9 @@ fn rename_drive_path(
 fn create_drive_dir(backend: &mut dyn DeviceBackend, path: &str) -> Result<(), OpError> {
     let (parent, name) = split_drive_path(path);
     let entries = backend.list_sample_dir(&parent)?;
-    if find_entry(&entries, &name).is_some() {
+    if find_entry_ci(&entries, &name).is_some() {
         return Err(OpError::InvalidRequest(format!(
-            "{path} already exists — pick another name"
+            "{path} already exists (or differs only by case) — pick another name"
         )));
     }
     backend.create_sample_dir(path)

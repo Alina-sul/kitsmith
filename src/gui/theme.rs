@@ -72,6 +72,8 @@ pub const INSPECTOR_WIDTH: f32 = 320.0;
 pub const KIT_LIST_WIDTH: f32 = 220.0;
 /// Width of inline name-edit text fields (kit/Sound rename).
 pub const NAME_FIELD_WIDTH: f32 = 140.0;
+/// Width of +Drive path text fields (move destination).
+pub const PATH_FIELD_WIDTH: f32 = 240.0;
 pub const LIST_ROW_HEIGHT: f32 = 40.0;
 pub const KIT_ROW_HEIGHT: f32 = 52.0;
 /// Content gap scale.

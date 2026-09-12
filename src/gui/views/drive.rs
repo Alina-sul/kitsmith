@@ -10,6 +10,9 @@ use crate::gui::app::{page_title, KitsmithApp};
 use crate::gui::{theme, widgets};
 use crate::model::ProjectModel;
 
+/// Hover text for write actions on protected content.
+const PROTECTED_HINT: &str = "FACTORY content is write-protected — the device refuses writes here.";
+
 pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     page_title(ui, "+Drive");
     let Some(port) = app.connected_in_port() else {
@@ -56,7 +59,11 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
             app.ui_state.drive_path = target;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if !in_factory && ui.button("New folder…").clicked() {
+            if ui
+                .add_enabled(!in_factory, egui::Button::new("New folder…"))
+                .on_disabled_hover_text(PROTECTED_HINT)
+                .clicked()
+            {
                 app.ui_state.drive_new_folder_open = true;
             }
         });
@@ -88,12 +95,21 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let path = app.ui_state.drive_path.clone();
     match app.drive.get(&path) {
         None => {
-            let ctx = ui.ctx().clone();
-            app.drive.request(port, path, move || ctx.request_repaint());
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Reading directory…");
-            });
+            // One file-protocol conversation at a time: while a plan runs,
+            // don't start a listing on the same port.
+            if app.execute.is_busy() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Waiting for the running device operation to finish…");
+                });
+            } else {
+                let ctx = ui.ctx().clone();
+                app.drive.request(port, path, move || ctx.request_repaint());
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Reading directory…");
+                });
+            }
         }
         Some(entries) => {
             let mut descend: Option<String> = None;
@@ -116,29 +132,39 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     } else {
                         format!("{path}/{}", entry.name)
                     };
-                    // Factory content and write-protected entries get no
-                    // write actions at all — reads only.
+                    // Factory content and write-protected entries show their
+                    // write actions disabled with the reason — a protected
+                    // state is a visible state, not an absence.
                     let writable = !in_factory && !entry.write_protected;
                     if entry.is_dir {
                         let row = widgets::list_row(ui, false, 32.0, |ui| {
                             ui.horizontal(|ui| {
                                 widgets::folder_icon(ui);
                                 ui.label(RichText::new(&entry.name).color(theme::TEXT_PRIMARY));
+                                if !writable {
+                                    ui.label(
+                                        RichText::new("🔒 write-protected")
+                                            .color(theme::TEXT_MUTED)
+                                            .size(theme::FONT_META),
+                                    );
+                                }
                             });
                         });
                         if row.clicked() {
                             descend = Some(full);
                         }
-                        if writable {
-                            row.context_menu(|ui| {
-                                // Folder rename/move waits on the hardware
-                                // probe (docs/hardware-verification.md).
-                                if ui.button("Delete empty folder…").clicked() {
-                                    delete = Some(entry.clone());
-                                    ui.close();
-                                }
-                            });
-                        }
+                        row.context_menu(|ui| {
+                            // Folder rename/move waits on the hardware
+                            // probe (docs/hardware-verification.md).
+                            if ui
+                                .add_enabled(writable, egui::Button::new("Delete empty folder…"))
+                                .on_disabled_hover_text(PROTECTED_HINT)
+                                .clicked()
+                            {
+                                delete = Some(entry.clone());
+                                ui.close();
+                            }
+                        });
                     } else {
                         let row = widgets::list_row(ui, false, 32.0, |ui| {
                             ui.horizontal(|ui| {
@@ -174,20 +200,30 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                                 load = Some(full.clone());
                                 ui.close();
                             }
-                            if writable {
-                                ui.separator();
-                                if ui.button("Rename…").clicked() {
-                                    rename = Some(entry.clone());
-                                    ui.close();
-                                }
-                                if ui.button("Move to folder…").clicked() {
-                                    move_to = Some(entry.clone());
-                                    ui.close();
-                                }
-                                if ui.button("Delete…").clicked() {
-                                    delete = Some(entry.clone());
-                                    ui.close();
-                                }
+                            ui.separator();
+                            if ui
+                                .add_enabled(writable, egui::Button::new("Rename…"))
+                                .on_disabled_hover_text(PROTECTED_HINT)
+                                .clicked()
+                            {
+                                rename = Some(entry.clone());
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(writable, egui::Button::new("Move to folder…"))
+                                .on_disabled_hover_text(PROTECTED_HINT)
+                                .clicked()
+                            {
+                                move_to = Some(entry.clone());
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(writable, egui::Button::new("Delete…"))
+                                .on_disabled_hover_text(PROTECTED_HINT)
+                                .clicked()
+                            {
+                                delete = Some(entry.clone());
+                                ui.close();
                             }
                         });
                     }

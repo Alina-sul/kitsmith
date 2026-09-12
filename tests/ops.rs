@@ -539,6 +539,34 @@ fn rename_to_an_existing_name_is_refused_at_execute_time() {
 }
 
 #[test]
+fn rename_onto_a_case_variant_is_refused() {
+    // Device FS case semantics are unresolved — a case-variant of another
+    // entry is conservatively a collision…
+    let entry = file_entry("K1", 0xAA, 100);
+    let plan = Plan::rename_drive_entry("/loops", &entry, "k2", true).expect("plan");
+    let mut backend = drive_backend();
+    let report = execute(&plan, &mut backend, |_, _| {});
+    assert!(!report.succeeded());
+    assert!(!backend.calls.iter().any(|c| c.starts_with("rename")));
+    // …but a pure case-change of the entry's own name is not self-colliding.
+    let plan = Plan::rename_drive_entry("/loops", &entry, "k1", true).expect("plan");
+    let mut backend = drive_backend();
+    let report = execute(&plan, &mut backend, |_, _| {});
+    assert!(report.succeeded(), "failed: {:?}", report.failed);
+}
+
+#[test]
+fn move_destination_must_be_a_well_formed_absolute_path() {
+    let entry = file_entry("K1", 0xAA, 100);
+    for bad in ["oneshots", "/oneshots/", "//oneshots", ""] {
+        assert!(
+            Plan::move_drive_entry("/loops", &entry, bad, true).is_err(),
+            "{bad:?} must be refused"
+        );
+    }
+}
+
+#[test]
 fn factory_and_bad_names_are_refused_at_plan_time() {
     let entry = file_entry("K1", 0xAA, 100);
     assert!(Plan::rename_drive_entry("/factory", &entry, "X", true).is_err());

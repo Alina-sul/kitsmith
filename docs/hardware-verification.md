@@ -25,7 +25,7 @@ Device: Analog Rytm MKII, OS 1.72, USB-MIDI. Probe: `cargo run --example probe`
 | +Drive create dir (0x11) | **pending** | opcode + framing pinned from the elektroid spec; MockBackend plan tests only. Probe: `mkdir /probe-a` → list-verify → cleanup | GUI action ships but every run is read-back verified |
 | +Drive delete dir (0x12) | **pending** | plan refuses non-empty dirs on a fresh listing regardless of device behavior. Probe: rmdir empty → verify gone; rmdir NON-empty → record the device's refusal behavior | — |
 | +Drive delete file (0x20) | **pending** | plan preflights hash+size identity, fresh RAM-slot check, and downloads a local WAV first (backup-first — nothing can re-upload yet). Probe on a scratch file only | refuse without local copy |
-| +Drive rename file, same dir (0x21) | **pending** | body = src NUL + dst NUL. Gate: the matrix's "hash stays on rename" claim — verify hash+size unchanged in the re-listing and that 0x23 (hash→path) resolves to the NEW path | — |
+| +Drive rename file, same dir (0x21) | **pending** | body = src NUL + dst NUL. Gate: the matrix's "hash stays on rename" claim — verify hash+size unchanged in the re-listing and that 0x23 (hash→path) resolves to the NEW path. Also probe: rename onto a case-variant of an existing name (FS case semantics unresolved — Kitsmith conservatively refuses case-variant collisions until then) | — |
 | +Drive move file, cross-dir (0x21) | **pending** | same opcode, dst path in another dir. Probe after same-dir rename passes | — |
 | +Drive rename/move of a DIRECTORY (0x21) | **pending** | elektroid pins 0x21 for files; dir support is unknown. GUI hides dir rename/move until this row flips. Probe on scratch dirs only (`/probe-a/inner` → in-place, then cross-dir) | dirs delete-only in the GUI |
 | Sample download (0x30–0x32) | **pending** | open reply carries id + total bytes; 64-byte header + BE PCM at payload offset 22; status 2 = factory refusal. Offline parse tested (tests/files.rs). Gate: byte totals + WAV plays | delete stays blocked (its backup needs this) |
@@ -83,3 +83,11 @@ Device: Analog Rytm MKII, OS 1.72, USB-MIDI. Probe: `cargo run --example probe`
   wire size. Don't show the listed size as "project size" in UI.
 - Two project names came back mojibake on the wire (`LDV~OQNIDBR`) — present on
   the device itself; render as-is, never "fix" silently.
+- +Drive write preflights leave a one-transact TOCTOU window: a file replaced
+  on the device between the delete preflight and the 0x20 send deletes the new
+  content while the local backup holds the old. Unavoidable without a
+  device-side compare-and-delete; every other interleaving fails safe (refused
+  preflight or failed verify).
+- The delete reference scan checks backed-up projects as of their last backup;
+  a project modified on the device afterwards can reference a sample unseen.
+  The delete modal states this.

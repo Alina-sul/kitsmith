@@ -26,6 +26,15 @@ impl DriveBrowser {
             .cloned()
     }
 
+    /// True while a directory fetch is in flight (plan launches wait for it —
+    /// one file-protocol conversation at a time on the port).
+    pub fn is_loading(&self) -> bool {
+        self.loading
+            .lock()
+            .expect("drive loading lock poisoned")
+            .is_some()
+    }
+
     /// Drops one cached listing so the next render re-fetches it (call after
     /// any write that changed the directory).
     pub fn invalidate(&self, path: &str) {

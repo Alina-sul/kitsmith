@@ -155,9 +155,11 @@ fn factory_tree_is_recognized_as_protected() {
 
 #[test]
 fn sample_file_parse_splits_header_and_swaps_pcm_to_le() {
-    // 64-byte header: mono, rate 48000, then two BE samples.
+    // 64-byte header: mono, declared size 4 bytes, rate 48000, then two BE
+    // samples.
     let mut raw = vec![0u8; 64];
     raw[1] = 0; // mono
+    raw[4..8].copy_from_slice(&4u32.to_be_bytes());
     raw[8..12].copy_from_slice(&48000u32.to_be_bytes());
     raw.extend_from_slice(&0x1234u16.to_be_bytes());
     raw.extend_from_slice(&0xFFFEu16.to_be_bytes());
@@ -167,6 +169,18 @@ fn sample_file_parse_splits_header_and_swaps_pcm_to_le() {
     assert_eq!(parsed.pcm_le, vec![0x34, 0x12, 0xFE, 0xFF]);
     // Shorter than the header is not a sample file.
     assert!(parse_sample_file(&[0u8; 10]).is_err());
+}
+
+#[test]
+fn sample_file_parse_refuses_a_size_mismatch() {
+    // The header claims 6 PCM bytes but only 4 arrived (wrong offset or a
+    // short block) — this must never become a "valid" backup WAV.
+    let mut raw = vec![0u8; 64];
+    raw[4..8].copy_from_slice(&6u32.to_be_bytes());
+    raw[8..12].copy_from_slice(&48000u32.to_be_bytes());
+    raw.extend_from_slice(&[0, 1, 2, 3]);
+    let err = parse_sample_file(&raw).expect_err("must refuse");
+    assert!(err.contains("refusing to store a corrupt backup"), "{err}");
 }
 
 #[test]
