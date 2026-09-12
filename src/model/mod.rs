@@ -90,10 +90,11 @@ pub struct SoundModel {
     pub machine: String,
     /// Project sample slot (1–127) the SMPL page points at, if any.
     pub sample_slot: Option<u8>,
-    /// Current values of the editable parameter pages. Defaulted (all zero)
-    /// in caches written before the kit editor existed — re-sync fills them.
+    /// Current values of the editable parameter pages. `None` in caches
+    /// written before the kit editor existed — the editor is gated until a
+    /// re-sync reads real values (never show fabricated zeros as state).
     #[serde(default)]
-    pub params: TrackParams,
+    pub params: Option<TrackParams>,
 }
 
 /// The machine-independent parameter values the kit editor can change,
@@ -415,7 +416,7 @@ impl SoundModel {
             name: sound.name().to_owned(),
             machine: format!("{:?}", sound.machine_type()),
             sample_slot: slot_from_wire(sound.sample().slice_number()),
-            params: TrackParams::from_sound(sound, level),
+            params: Some(TrackParams::from_sound(sound, level)),
         }
     }
 }

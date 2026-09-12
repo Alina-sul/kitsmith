@@ -316,8 +316,7 @@ fn paste_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
     }
 
     if let (Some(plan), Some(port)) = (launch, connected) {
-        app.ui_state.paste_modal_open = false;
-        app.execute.launch(
+        let launched = app.execute.launch(
             plan,
             port,
             ctx.clone(),
@@ -326,6 +325,14 @@ fn paste_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
                     .to_owned(),
             ),
         );
+        if launched {
+            app.ui_state.paste_modal_open = false;
+        } else {
+            app.toast(
+                "Another device operation is still running — try again when it finishes."
+                    .to_owned(),
+            );
+        }
     } else if close {
         app.ui_state.paste_modal_open = false;
     }

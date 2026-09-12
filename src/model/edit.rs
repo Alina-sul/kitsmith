@@ -182,8 +182,10 @@ impl KitEdit {
         };
         match (&self.value, self.field) {
             (FieldValue::Text(name), KitField::KitName | KitField::SoundName(_)) => {
-                if !name.is_ascii() {
-                    return err("name must be ASCII");
+                // The GUI filters as the user types, but this gate is the one
+                // ops/ enforces — any future caller inherits it.
+                if !name.is_ascii() || name.chars().any(|c| c.is_ascii_control()) {
+                    return err("name must be printable ASCII");
                 }
                 if name.len() > NAME_MAX_LEN {
                     return err("name is longer than 15 characters");

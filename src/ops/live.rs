@@ -158,12 +158,27 @@ impl DeviceBackend for LiveBackend {
         // Always mutate a fresh copy of the kit, never a stale cache — the
         // untouched bytes (scenes, performance, unmodeled regions) must be
         // whatever is on the device right now.
-        self.query_kit(kit_index)?;
+        let reply = self.query_kit(kit_index)?;
         let kit = self
             .rytm
             .kits_mut()
             .get_mut(kit_index)
             .ok_or_else(|| OpError::InvalidRequest(format!("no kit {kit_index}")))?;
+        // Drift guard: the write sends the WHOLE kit, but verification only
+        // re-checks edited fields — a rytm-rs (FW 1.70) encode difference in
+        // any unmodeled region (scenes, performance) would corrupt silently.
+        // Refusing a kit that does not re-encode byte-identically turns that
+        // failure mode into an explained no-op. (If real hardware exposes
+        // legitimate don't-care bytes here, relax this comparison for them —
+        // never by skipping it.)
+        let reencoded = kit.as_sysex().map_err(|e| OpError::Device(e.to_string()))?;
+        if reencoded != reply {
+            return Err(OpError::Device(format!(
+                "kit {:02} re-encodes differently than the device sent it \
+                 (firmware drift?) — write refused to protect unmodeled bytes",
+                kit_index + 1
+            )));
+        }
         for edit in edits {
             crate::device::kit_edit::apply(edit, kit).map_err(OpError::InvalidRequest)?;
         }

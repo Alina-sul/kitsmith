@@ -153,6 +153,7 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     }
     kit_paste_modal(app, &ctx);
     crate::gui::kit_editor::save_modal(app, &ctx);
+    crate::gui::kit_editor::discard_modal(app, &ctx);
 }
 
 /// The kit transfer clipboard banner.
@@ -304,8 +305,7 @@ fn kit_paste_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
     }
 
     if let (Some(plan), Some(port)) = (launch, connected) {
-        app.ui_state.kit_paste_modal_open = false;
-        app.execute.launch(
+        let launched = app.execute.launch(
             plan,
             port,
             ctx.clone(),
@@ -314,6 +314,14 @@ fn kit_paste_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
                     .to_owned(),
             ),
         );
+        if launched {
+            app.ui_state.kit_paste_modal_open = false;
+        } else {
+            app.toast(
+                "Another device operation is still running — try again when it finishes."
+                    .to_owned(),
+            );
+        }
     } else if close {
         app.ui_state.kit_paste_modal_open = false;
     }
@@ -363,6 +371,12 @@ fn kit_list(
         .filter(|kit| kit_matches(kit, model, &query))
         .collect();
 
+    // The kit whose unsaved draft must stay visible wherever the user is.
+    let drafted_kit = state
+        .edit_draft
+        .as_ref()
+        .filter(|d| !d.is_empty())
+        .map(|d| d.kit_index);
     ScrollArea::vertical()
         .id_salt("kit-list-scroll")
         .show(ui, |ui| {
@@ -390,6 +404,9 @@ fn kit_list(
                                 )
                                 .truncate(),
                             );
+                            if drafted_kit == Some(kit.index) {
+                                widgets::badge(ui, "EDITING", theme::WARNING);
+                            }
                         });
                         if !patterns.is_empty() {
                             ui.label(
@@ -490,15 +507,27 @@ fn kit_header(
                 }
                 Some(_) => {}
                 None => {
+                    // Old caches predate parameter capture — never open an
+                    // editor on fabricated values (PRD P7).
+                    let params_read = kit.sounds.iter().all(|s| s.params.is_some());
+                    let saving = state.pending_save.is_some();
+                    let hint = if browsing {
+                        "Snapshots are read-only — load this project on the device to edit it"
+                    } else if saving {
+                        "A save is still running — wait for it to finish"
+                    } else {
+                        "Re-sync to edit — parameter values not read yet"
+                    };
                     if ui
-                        .add_enabled(!browsing, egui::Button::new("Edit kit"))
+                        .add_enabled(
+                            !browsing && params_read && !saving,
+                            egui::Button::new("Edit kit"),
+                        )
                         .on_hover_text(
                             "Rename the kit and tweak track parameters; changes are saved \
                              to the device as one verified write.",
                         )
-                        .on_disabled_hover_text(
-                            "Snapshots are read-only — load this project on the device to edit it",
-                        )
+                        .on_disabled_hover_text(hint)
                         .clicked()
                     {
                         start_edit = true;
