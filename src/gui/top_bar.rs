@@ -167,16 +167,70 @@ fn sync_control(app: &mut KitsmithApp, ui: &mut egui::Ui, ctx: &egui::Context) {
                 .on_disabled_hover_text("Connect the Analog Rytm first");
             if response.clicked() {
                 if let Some(port) = in_port {
-                    let repaint_ctx = ctx.clone();
-                    app.sync.start(port, move || repaint_ctx.request_repaint());
+                    let unsaved_edits = app
+                        .ui_state
+                        .kits
+                        .edit_draft
+                        .as_ref()
+                        .map_or(0, |d| d.edits.len());
+                    if unsaved_edits > 0 {
+                        // Syncing discards the open kit-edit draft (the model
+                        // it was built on gets replaced) — never silently.
+                        app.ui_state.sync_confirm = Some(unsaved_edits);
+                    } else {
+                        let repaint_ctx = ctx.clone();
+                        app.sync.start(port, move || repaint_ctx.request_repaint());
+                    }
                 }
             }
+            sync_confirm_modal(app, ctx);
             if let SyncStatus::Failed(err) = status {
                 ui.label(RichText::new("Sync failed").color(theme::DANGER))
                     .on_hover_text(err);
             }
             sync_result_badge(app, ui);
         }
+    }
+}
+
+/// Confirms a sync that would discard unsaved kit edits (PRD P8: work is
+/// never destroyed silently).
+fn sync_confirm_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
+    let Some(unsaved_edits) = app.ui_state.sync_confirm else {
+        return;
+    };
+    let mut proceed = false;
+    let mut cancel = false;
+    egui::Window::new("Discard unsaved kit edits?")
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label(format!(
+                "Syncing re-reads the device and discards your {unsaved_edits} unsaved \
+                 kit edit{}.",
+                if unsaved_edits == 1 { "" } else { "s" }
+            ));
+            ui.add_space(theme::GAP_S);
+            ui.horizontal(|ui| {
+                if ui.button("Discard and sync").clicked() {
+                    proceed = true;
+                }
+                if ui.button("Keep editing").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    if proceed {
+        app.ui_state.sync_confirm = None;
+        app.ui_state.kits.edit_draft = None;
+        app.ui_state.kits.save_modal_open = false;
+        app.ui_state.kits.discard_confirm_open = false;
+        if let Some(port) = app.connected_in_port() {
+            let repaint_ctx = ctx.clone();
+            app.sync.start(port, move || repaint_ctx.request_repaint());
+        }
+    } else if cancel {
+        app.ui_state.sync_confirm = None;
     }
 }
 

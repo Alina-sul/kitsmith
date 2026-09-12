@@ -48,16 +48,38 @@ pub struct ExecutePanel {
 }
 
 impl ExecutePanel {
+    /// True while a plan is executing or its result awaits dismissal. The
+    /// device conversation is strictly serial — a second concurrent plan
+    /// would interleave replies and could verify against the wrong snapshot.
+    pub fn is_busy(&self) -> bool {
+        !matches!(
+            *self.state.lock().expect("exec state lock poisoned"),
+            ExecState::Idle
+        )
+    }
+
     /// Starts executing an externally built plan (e.g. a pattern paste).
+    /// Refuses (returns false) while another execution is in flight.
+    #[must_use]
     pub fn launch(
         &mut self,
         plan: Plan,
         in_port: String,
         ctx: egui::Context,
         post_note: Option<String>,
-    ) {
+    ) -> bool {
+        if self.is_busy() {
+            return false;
+        }
         self.post_note = post_note;
         self.spawn(plan, in_port, ctx);
+        true
+    }
+
+    /// Whether the session backup is still considered fresh (plans built
+    /// outside this panel need it to decide on a backup step).
+    pub fn backup_taken(&self) -> bool {
+        self.backup_taken
     }
 
     /// Forgets the session backup, so the next plan pulls a fresh one.
@@ -147,6 +169,16 @@ impl ExecutePanel {
                     });
                 if close {
                     *self.state.lock().expect("exec state lock poisoned") = ExecState::Idle;
+                    self.post_note = None;
+                    // A launch that died before running any step is still an
+                    // outcome — callers waiting on the plan (e.g. a pending
+                    // kit-edit save) must hear about it, or their state leaks
+                    // into the next unrelated plan's report.
+                    return Some(ExecutionReport {
+                        completed: Vec::new(),
+                        failed: Some(("opening the device link".to_owned(), err)),
+                        backed_up: false,
+                    });
                 }
                 return None;
             }

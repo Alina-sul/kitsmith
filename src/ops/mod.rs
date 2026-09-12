@@ -12,10 +12,11 @@ mod live;
 pub use backend::{DeviceBackend, OpError};
 pub use live::LiveBackend;
 
+use crate::model::edit::{FieldValue, KitEdit, KitField};
 use crate::model::SAMPLE_SLOT_COUNT;
 
 /// One step of a transaction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OpStep {
     /// Pull a full object backup to disk (enforced before the first write).
     BackupProject,
@@ -37,6 +38,17 @@ pub enum OpStep {
     VerifyPatternKitLink {
         pattern_index: usize,
         expected_kit: usize,
+    },
+    /// Apply a set of field edits to a freshly read kit and write it back.
+    EditKit {
+        kit_index: usize,
+        edits: Vec<KitEdit>,
+    },
+    /// Read a kit back and check every listed field against its expected
+    /// value (the read-back half of [`OpStep::EditKit`]).
+    VerifyKitFields {
+        kit_index: usize,
+        checks: Vec<KitEdit>,
     },
 }
 
@@ -65,12 +77,24 @@ impl OpStep {
                 "read pattern {} back and verify its kit link",
                 crate::model::pattern_display_name(*pattern_index)
             ),
+            Self::EditKit { kit_index, edits } => format!(
+                "kit {:02}: apply {} change{} and write the kit",
+                kit_index + 1,
+                edits.len(),
+                if edits.len() == 1 { "" } else { "s" }
+            ),
+            Self::VerifyKitFields { kit_index, checks } => format!(
+                "read kit {:02} back and verify {} edited field{}",
+                kit_index + 1,
+                checks.len(),
+                if checks.len() == 1 { "" } else { "s" }
+            ),
         }
     }
 }
 
 /// An ordered, previewable transaction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
     pub title: String,
     pub steps: Vec<OpStep>,
@@ -105,6 +129,37 @@ impl Plan {
                 kit_index + 1,
                 track + 1
             ),
+            steps,
+        })
+    }
+
+    /// A plan that applies a draft of kit field edits, prepending the session
+    /// backup when one has not been taken yet. Every edit is validated here,
+    /// before anything touches the device.
+    pub fn edit_kit(
+        draft: &crate::model::edit::KitEditDraft,
+        backup_taken: bool,
+    ) -> Result<Self, OpError> {
+        if draft.edits.is_empty() {
+            return Err(OpError::InvalidRequest("no edits to apply".into()));
+        }
+        for edit in &draft.edits {
+            edit.validate().map_err(OpError::InvalidRequest)?;
+        }
+        let mut steps = Vec::new();
+        if !backup_taken {
+            steps.push(OpStep::BackupProject);
+        }
+        steps.push(OpStep::EditKit {
+            kit_index: draft.kit_index,
+            edits: draft.edits.clone(),
+        });
+        steps.push(OpStep::VerifyKitFields {
+            kit_index: draft.kit_index,
+            checks: draft.edits.clone(),
+        });
+        Ok(Self {
+            title: format!("Save changes to kit {:02}", draft.kit_index + 1),
             steps,
         })
     }
@@ -207,6 +262,10 @@ pub fn execute(
                 pattern_index,
                 expected_kit,
             } => verify_pattern_kit_link(backend, *pattern_index, *expected_kit),
+            OpStep::EditKit { kit_index, edits } => backend.apply_kit_edits(*kit_index, edits),
+            OpStep::VerifyKitFields { kit_index, checks } => {
+                verify_kit_fields(backend, *kit_index, checks)
+            }
         };
         match result {
             Ok(()) => {
@@ -222,6 +281,35 @@ pub fn execute(
         }
     }
     report
+}
+
+/// Read-back verification of edited kit fields: every check's field is
+/// re-read from the device and compared against the value that was written.
+fn verify_kit_fields(
+    backend: &mut dyn DeviceBackend,
+    kit_index: usize,
+    checks: &[KitEdit],
+) -> Result<(), OpError> {
+    let fields: Vec<KitField> = checks.iter().map(|c| c.field).collect();
+    let read_back: Vec<FieldValue> = backend.read_kit_fields(kit_index, &fields)?;
+    if read_back.len() != checks.len() {
+        return Err(OpError::VerificationFailed(format!(
+            "asked for {} fields, device read returned {}",
+            checks.len(),
+            read_back.len()
+        )));
+    }
+    for (check, read) in checks.iter().zip(&read_back) {
+        if !check.value_matches(read) {
+            return Err(OpError::VerificationFailed(format!(
+                "kit {:02} {}: wrote {}, device reports {read}",
+                kit_index + 1,
+                check.field.label(),
+                check.value
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Read-back verification of a written kit's sample slots.

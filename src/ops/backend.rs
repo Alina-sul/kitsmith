@@ -56,4 +56,19 @@ pub trait DeviceBackend {
 
     /// Fresh-reads which kit a pattern links to.
     fn read_pattern_kit_link(&mut self, pattern_index: usize) -> Result<usize, OpError>;
+
+    /// Fresh-reads a kit, applies the field edits, and writes the kit back.
+    fn apply_kit_edits(
+        &mut self,
+        kit_index: usize,
+        edits: &[crate::model::edit::KitEdit],
+    ) -> Result<(), OpError>;
+
+    /// Fresh-reads a kit and returns the listed fields' current values, in
+    /// the same order.
+    fn read_kit_fields(
+        &mut self,
+        kit_index: usize,
+        fields: &[crate::model::edit::KitField],
+    ) -> Result<Vec<crate::model::edit::FieldValue>, OpError>;
 }

@@ -6,6 +6,7 @@
 
 pub mod detect;
 pub mod files;
+pub mod kit_edit;
 pub mod objects;
 pub mod projfile;
 pub mod rawconv;

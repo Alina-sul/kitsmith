@@ -78,6 +78,16 @@ pub struct KitsState {
     pub traced_slot: Option<u8>,
     /// Hides the sample-slot rail when no track inspector is open.
     pub rail_hidden: bool,
+    /// The in-progress kit edits ("Edit kit" mode). `None` = read-only.
+    pub edit_draft: Option<crate::model::edit::KitEditDraft>,
+    /// The save-plan preview modal for the current draft.
+    pub save_modal_open: bool,
+    /// The confirm dialog for discarding a non-empty draft.
+    pub discard_confirm_open: bool,
+    /// A draft whose save plan is executing; applied to the local model when
+    /// the plan's read-back verification succeeds, restored to the editor
+    /// when it fails.
+    pub pending_save: Option<crate::model::edit::KitEditDraft>,
 }
 
 /// All per-frame-persistent UI state, separate from device/model state.
@@ -112,6 +122,8 @@ pub struct UiState {
     /// Pad waiting for a +Drive sample: `(kit_index, track)`. Set from the
     /// pad's context menu; consumed after the loaded sample is assigned.
     pub pending_pad_assign: Option<(usize, usize)>,
+    /// Sync-would-discard-edits confirmation: the number of unsaved edits.
+    pub sync_confirm: Option<usize>,
     /// Sidebar "Rearrange" mode: shows empty slots and enables project drag.
     pub rearrange: bool,
 }
@@ -203,6 +215,23 @@ impl KitsmithApp {
 
     pub(crate) fn toast(&mut self, text: String) {
         self.toasts.push((text, Instant::now()));
+    }
+
+    /// Drops any open kit-edit draft, telling the user when real work is
+    /// lost — a draft must never vanish silently (PRD P8).
+    fn discard_kit_draft(&mut self, reason: &str) {
+        let had_edits = self
+            .ui_state
+            .kits
+            .edit_draft
+            .as_ref()
+            .is_some_and(|d| !d.is_empty());
+        self.ui_state.kits.edit_draft = None;
+        self.ui_state.kits.save_modal_open = false;
+        self.ui_state.kits.discard_confirm_open = false;
+        if had_edits {
+            self.toast(reason.to_owned());
+        }
     }
 
     /// Persists the local metadata store, reporting failure as a toast.
@@ -373,15 +402,20 @@ impl KitsmithApp {
             // A sync re-reads whatever project the hardware has loaded now,
             // which may not be the one the session backup covers.
             self.execute.invalidate_backup();
+            // The model under an open kit-edit draft just changed; stale
+            // "current" values would make the draft lie. Start over.
+            self.discard_kit_draft("Kit edits discarded — device state was re-read");
         }
 
         // A reconnect (or a different Rytm) invalidates the session backup for
         // the same reason: the active project may have changed while we were
-        // not looking.
+        // not looking. An open kit-edit draft was confirmed against a device
+        // state that may no longer exist — it goes too.
         let in_port = self.connected_in_port();
         if in_port != self.seen_in_port {
             self.seen_in_port = in_port;
             self.execute.invalidate_backup();
+            self.discard_kit_draft("Kit edits discarded — the device connection changed");
         }
 
         // Files dropped anywhere on the window enter the import queue.
@@ -643,6 +677,48 @@ impl eframe::App for KitsmithApp {
             };
             let detail = report.completed.join("\n");
             self.log_activity(kind, title, Some(detail));
+            if let Some(draft) = self.ui_state.kits.pending_save.take() {
+                let kit_label = self
+                    .model
+                    .as_ref()
+                    .and_then(|m| m.kits.get(draft.kit_index))
+                    .map_or_else(
+                        || format!("Kit {:02}", draft.kit_index + 1),
+                        |k| {
+                            crate::model::names::kit_display_name(&k.name, k.index)
+                                .text()
+                                .to_owned()
+                        },
+                    );
+                if report.succeeded() {
+                    // The read-back verified these values on the device;
+                    // mirror them locally instead of forcing a re-sync.
+                    if let Some(model) = &mut self.model {
+                        crate::gui::kit_editor::apply_draft_to_model(model, &draft);
+                        if let Err(e) = cache::save(model) {
+                            self.toast(format!("cache write failed: {e}"));
+                        }
+                    }
+                    self.toast(format!("{kit_label} saved and verified"));
+                } else if self.ui_state.kits.edit_draft.is_none() {
+                    // The write did not complete — hand the edits back to
+                    // the editor so nothing the user typed is lost. (The
+                    // write may still have landed before verification
+                    // failed, so the dashboard can trail the device.)
+                    self.ui_state.kits.edit_draft = Some(draft);
+                    self.toast(format!(
+                        "Save failed — your edits are back in the kit editor. \
+                         Re-sync to see {kit_label}'s actual device state."
+                    ));
+                } else {
+                    // A newer draft exists; never silently overwrite it.
+                    self.toast(format!(
+                        "Save of {kit_label} failed; its edits were dropped in \
+                         favor of the draft you started since. Re-sync to see \
+                         the device's actual state."
+                    ));
+                }
+            }
         }
 
         self.show_toasts(&ctx);

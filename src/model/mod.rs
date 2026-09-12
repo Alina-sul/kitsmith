@@ -6,6 +6,7 @@
 //! information the device itself never shows. Serializable, so it doubles as
 //! the on-disk cache format.
 
+pub mod edit;
 pub mod names;
 
 use std::collections::BTreeMap;
@@ -33,7 +34,7 @@ pub fn slot_from_wire(raw: usize) -> Option<u8> {
 }
 
 /// A distilled Rytm project.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ProjectModel {
     pub kits: Vec<KitModel>,
     pub patterns: Vec<PatternModel>,
@@ -75,7 +76,7 @@ pub struct ProjectInfo {
 }
 
 /// One kit: 12 track Sounds + a name.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KitModel {
     pub index: usize,
     pub name: String,
@@ -83,12 +84,115 @@ pub struct KitModel {
 }
 
 /// One Sound, reduced to what the dashboard cares about.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SoundModel {
     pub name: String,
     pub machine: String,
     /// Project sample slot (1–127) the SMPL page points at, if any.
     pub sample_slot: Option<u8>,
+    /// Current values of the editable parameter pages. `None` in caches
+    /// written before the kit editor existed — the editor is gated until a
+    /// re-sync reads real values (never show fabricated zeros as state).
+    #[serde(default)]
+    pub params: Option<TrackParams>,
+}
+
+/// The machine-independent parameter values the kit editor can change,
+/// captured at sync time so editors open on the device's current state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TrackParams {
+    pub level: i32,
+    pub smpl_tune: i32,
+    pub smpl_fine_tune: i32,
+    pub smpl_bit_reduction: i32,
+    pub smpl_start: f32,
+    pub smpl_end: f32,
+    pub smpl_loop: bool,
+    pub smpl_level: i32,
+    pub amp_attack: i32,
+    pub amp_hold: i32,
+    pub amp_decay: i32,
+    pub amp_overdrive: i32,
+    pub amp_delay_send: i32,
+    pub amp_reverb_send: i32,
+    pub amp_pan: i32,
+    pub amp_volume: i32,
+    pub flt_attack: i32,
+    pub flt_sustain: i32,
+    pub flt_decay: i32,
+    pub flt_release: i32,
+    pub flt_cutoff: i32,
+    pub flt_resonance: i32,
+    pub flt_env_amount: i32,
+}
+
+impl TrackParams {
+    /// Reads the editable values off one kit-track Sound. `level` is the
+    /// kit-side track level (pool sounds have none — pass 0).
+    fn from_sound(sound: &rytm_rs::object::Sound, level: usize) -> Self {
+        let sample = sound.sample();
+        let amp = sound.amplitude();
+        let filter = sound.filter();
+        Self {
+            level: level as i32,
+            smpl_tune: sample.tune() as i32,
+            smpl_fine_tune: sample.fine_tune() as i32,
+            smpl_bit_reduction: sample.bit_reduction() as i32,
+            smpl_start: sample.start(),
+            smpl_end: sample.end(),
+            smpl_loop: sample.loop_flag(),
+            smpl_level: sample.volume() as i32,
+            amp_attack: amp.attack() as i32,
+            amp_hold: amp.hold() as i32,
+            amp_decay: amp.decay() as i32,
+            amp_overdrive: amp.overdrive() as i32,
+            amp_delay_send: amp.delay_send() as i32,
+            amp_reverb_send: amp.reverb_send() as i32,
+            // rytm-rs's pan() getter sign-extends the i8 field into usize;
+            // truncate back to one byte to recover the signed value.
+            amp_pan: i32::from((amp.pan() as u8) as i8),
+            amp_volume: amp.volume() as i32,
+            flt_attack: filter.attack() as i32,
+            flt_sustain: filter.sustain() as i32,
+            flt_decay: filter.decay() as i32,
+            flt_release: filter.release() as i32,
+            flt_cutoff: filter.cutoff() as i32,
+            flt_resonance: filter.resonance() as i32,
+            flt_env_amount: filter.envelope_amount() as i32,
+        }
+    }
+
+    /// The current value of an editable field, in the edit vocabulary.
+    /// `None` for fields this struct does not carry (names).
+    pub fn value(&self, field: edit::KitField) -> Option<edit::FieldValue> {
+        use edit::{FieldValue, KitField};
+        Some(match field {
+            KitField::KitName | KitField::SoundName(_) => return None,
+            KitField::TrackLevel(_) => FieldValue::Int(self.level),
+            KitField::SampleTune(_) => FieldValue::Int(self.smpl_tune),
+            KitField::SampleFineTune(_) => FieldValue::Int(self.smpl_fine_tune),
+            KitField::SampleBitReduction(_) => FieldValue::Int(self.smpl_bit_reduction),
+            KitField::SampleStart(_) => FieldValue::Float(self.smpl_start),
+            KitField::SampleEnd(_) => FieldValue::Float(self.smpl_end),
+            KitField::SampleLoop(_) => FieldValue::Toggle(self.smpl_loop),
+            KitField::SampleLevel(_) => FieldValue::Int(self.smpl_level),
+            KitField::AmpAttack(_) => FieldValue::Int(self.amp_attack),
+            KitField::AmpHold(_) => FieldValue::Int(self.amp_hold),
+            KitField::AmpDecay(_) => FieldValue::Int(self.amp_decay),
+            KitField::AmpOverdrive(_) => FieldValue::Int(self.amp_overdrive),
+            KitField::AmpDelaySend(_) => FieldValue::Int(self.amp_delay_send),
+            KitField::AmpReverbSend(_) => FieldValue::Int(self.amp_reverb_send),
+            KitField::AmpPan(_) => FieldValue::Int(self.amp_pan),
+            KitField::AmpVolume(_) => FieldValue::Int(self.amp_volume),
+            KitField::FltAttack(_) => FieldValue::Int(self.flt_attack),
+            KitField::FltSustain(_) => FieldValue::Int(self.flt_sustain),
+            KitField::FltDecay(_) => FieldValue::Int(self.flt_decay),
+            KitField::FltRelease(_) => FieldValue::Int(self.flt_release),
+            KitField::FltCutoff(_) => FieldValue::Int(self.flt_cutoff),
+            KitField::FltResonance(_) => FieldValue::Int(self.flt_resonance),
+            KitField::FltEnvAmount(_) => FieldValue::Int(self.flt_env_amount),
+        })
+    }
 }
 
 /// One pattern: its index, the kit it links to, and its sample dependencies.
@@ -150,15 +254,21 @@ impl ProjectModel {
         let kits = rytm
             .kits()
             .iter()
-            .map(|kit| KitModel {
-                index: kit.index(),
-                name: kit.name().to_owned(),
-                sounds: kit
-                    .sounds()
-                    .iter()
-                    .take(TRACK_COUNT)
-                    .map(SoundModel::from_rytm)
-                    .collect(),
+            .map(|kit| {
+                let levels = kit.track_levels();
+                KitModel {
+                    index: kit.index(),
+                    name: kit.name().to_owned(),
+                    sounds: kit
+                        .sounds()
+                        .iter()
+                        .take(TRACK_COUNT)
+                        .enumerate()
+                        .map(|(track, sound)| {
+                            SoundModel::from_rytm(sound, levels.get(track).copied().unwrap_or(0))
+                        })
+                        .collect(),
+                }
             })
             .collect();
         let patterns = rytm
@@ -198,7 +308,7 @@ impl ProjectModel {
         let pool_sounds = rytm
             .pool_sounds()
             .iter()
-            .map(SoundModel::from_rytm)
+            .map(|sound| SoundModel::from_rytm(sound, 0))
             .collect();
         Self {
             kits,
@@ -301,11 +411,12 @@ impl ProjectModel {
 }
 
 impl SoundModel {
-    fn from_rytm(sound: &rytm_rs::object::Sound) -> Self {
+    fn from_rytm(sound: &rytm_rs::object::Sound, level: usize) -> Self {
         Self {
             name: sound.name().to_owned(),
             machine: format!("{:?}", sound.machine_type()),
             sample_slot: slot_from_wire(sound.sample().slice_number()),
+            params: Some(TrackParams::from_sound(sound, level)),
         }
     }
 }

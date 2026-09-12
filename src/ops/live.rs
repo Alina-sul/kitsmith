@@ -150,6 +150,63 @@ impl DeviceBackend for LiveBackend {
             .collect())
     }
 
+    fn apply_kit_edits(
+        &mut self,
+        kit_index: usize,
+        edits: &[crate::model::edit::KitEdit],
+    ) -> Result<(), OpError> {
+        // Always mutate a fresh copy of the kit, never a stale cache — the
+        // untouched bytes (scenes, performance, unmodeled regions) must be
+        // whatever is on the device right now.
+        let reply = self.query_kit(kit_index)?;
+        let kit = self
+            .rytm
+            .kits_mut()
+            .get_mut(kit_index)
+            .ok_or_else(|| OpError::InvalidRequest(format!("no kit {kit_index}")))?;
+        // Drift guard: the write sends the WHOLE kit, but verification only
+        // re-checks edited fields — a rytm-rs (FW 1.70) encode difference in
+        // any unmodeled region (scenes, performance) would corrupt silently.
+        // Refusing a kit that does not re-encode byte-identically turns that
+        // failure mode into an explained no-op. (If real hardware exposes
+        // legitimate don't-care bytes here, relax this comparison for them —
+        // never by skipping it.)
+        let reencoded = kit.as_sysex().map_err(|e| OpError::Device(e.to_string()))?;
+        if reencoded != reply {
+            return Err(OpError::Device(format!(
+                "kit {:02} re-encodes differently than the device sent it \
+                 (firmware drift?) — write refused to protect unmodeled bytes",
+                kit_index + 1
+            )));
+        }
+        for edit in edits {
+            crate::device::kit_edit::apply(edit, kit).map_err(OpError::InvalidRequest)?;
+        }
+        let msg = kit.as_sysex().map_err(|e| OpError::Device(e.to_string()))?;
+        self.link
+            .send(&msg)
+            .map_err(|e| OpError::Device(e.to_string()))
+    }
+
+    fn read_kit_fields(
+        &mut self,
+        kit_index: usize,
+        fields: &[crate::model::edit::KitField],
+    ) -> Result<Vec<crate::model::edit::FieldValue>, OpError> {
+        self.query_kit(kit_index)?;
+        let kit = self
+            .rytm
+            .kits()
+            .get(kit_index)
+            .ok_or_else(|| OpError::InvalidRequest(format!("no kit {kit_index}")))?;
+        fields
+            .iter()
+            .map(|field| {
+                crate::device::kit_edit::extract(*field, kit).map_err(OpError::InvalidRequest)
+            })
+            .collect()
+    }
+
     fn read_pattern_kit_link(&mut self, pattern_index: usize) -> Result<usize, OpError> {
         let query = PatternQuery::new(pattern_index)
             .and_then(|q| q.as_sysex())

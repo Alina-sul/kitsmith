@@ -52,9 +52,9 @@ Status: ✅ built+hardware-verified · 🔶 built, needs hardware verification �
 | --- | --- | --- | --- |
 | Read kits/sounds (active project) | OS | ✅ | incl. sound locks for dependency graph |
 | Read kits of *backed-up* projects | RAW | ✅ | parsed from .arprj |
-| **Edit kit params** (levels, sounds, FX) | OS | 🔶 | kit raw→syx round-trip proven offline; HW write pending |
+| **Edit kit params** (levels, sounds, FX) | OS | 🔶 | kit editor v0 built (rename + track level + SMPL/AMP/FLTR via ops Plan, read-back-verified); FX pages + machine params next; HW write pending |
 | **Create kit from scratch → save to slot** | OS | 🧭 | the headline write; machine-per-track validity per `ar-sound-machines` skill |
-| **Rename kit / Sound** | OS | 🧭 | name field in kit/sound objects (NUL-padded); round-trip then write |
+| **Rename kit / Sound** | OS | 🔶 | built into kit editor v0 (ASCII ≤15, validated + read-back-verified); HW write pending |
 | Copy kit across projects | RAW→OS | 🔶 | built in PR #8 (capture→switch→paste); slot remap in plan |
 | **Reorder kits** (slot moves) | OS | 🔬 | patterns reference kits by slot — reorder must rewrite pattern links |
 | Sound pool management (load/unload/rename) | OS | 🧭 | pool = 128 slots; sound locks reference pool indices |

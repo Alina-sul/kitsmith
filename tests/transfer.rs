@@ -256,6 +256,20 @@ fn paste_execution_verifies_via_read_back() {
         fn read_pattern_kit_link(&mut self, _: usize) -> Result<usize, OpError> {
             Ok(self.kit_link)
         }
+        fn apply_kit_edits(
+            &mut self,
+            _: usize,
+            _: &[kitsmith::model::edit::KitEdit],
+        ) -> Result<(), OpError> {
+            unreachable!("paste plans never edit kit fields")
+        }
+        fn read_kit_fields(
+            &mut self,
+            _: usize,
+            _: &[kitsmith::model::edit::KitField],
+        ) -> Result<Vec<kitsmith::model::edit::FieldValue>, OpError> {
+            unreachable!()
+        }
     }
 
     let clip = test_clipboard();
