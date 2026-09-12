@@ -33,6 +33,43 @@ impl fmt::Display for LinkError {
 
 impl std::error::Error for LinkError {}
 
+/// Reassembles sysex messages from transport fragments.
+///
+/// CoreMIDI (and other backends) may split one sysex message across several
+/// packets: only the first starts with `F0`, only the last ends with `F7`,
+/// and continuation fragments begin with plain data bytes. Real-time status
+/// bytes (`F8..=FF`) may interleave anywhere and must not break assembly.
+#[derive(Default)]
+pub struct SysexAssembler {
+    pending: Vec<u8>,
+}
+
+impl SysexAssembler {
+    /// Feeds one transport chunk; returns a complete `F0…F7` message when
+    /// one finishes.
+    pub fn push(&mut self, msg: &[u8]) -> Option<Vec<u8>> {
+        let first = *msg.first()?;
+        if first == 0xF0 {
+            // New message starts (any unfinished one is abandoned).
+            self.pending.clear();
+            self.pending.extend_from_slice(msg);
+        } else if first < 0x80 || first == 0xF7 {
+            // Continuation data (or a lone terminator) for an open message.
+            if self.pending.is_empty() {
+                return None;
+            }
+            self.pending.extend_from_slice(msg);
+        } else {
+            // Real-time or channel message — not part of the sysex stream.
+            return None;
+        }
+        if self.pending.last() == Some(&0xF7) {
+            return Some(std::mem::take(&mut self.pending));
+        }
+        None
+    }
+}
+
 /// An open in+out connection pair to one device.
 pub struct MidiLink {
     out: MidiOutputConnection,
@@ -63,15 +100,16 @@ impl MidiLink {
             .ok_or_else(|| LinkError::PortNotFound(out_port.to_owned()))?;
 
         let (tx, rx) = mpsc::channel();
+        let mut assembler = SysexAssembler::default();
         let input = midi_in
             .connect(
                 &in_p,
                 "rytmdash-link-in",
                 move |_ts, msg, _| {
-                    // Only sysex is interesting on this link; drop the rest
-                    // (clock, notes) at the door.
-                    if msg.first() == Some(&0xF0) {
-                        let _ = tx.send(msg.to_vec());
+                    // Large sysex arrives fragmented across packets;
+                    // reassemble before queueing. Non-sysex is dropped.
+                    if let Some(complete) = assembler.push(msg) {
+                        let _ = tx.send(complete);
                     }
                 },
                 (),

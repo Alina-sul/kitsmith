@@ -2,12 +2,17 @@
 //! workspace views, inspectors and the plan modal.
 
 mod app;
+mod backup;
+mod drive_ctl;
 mod execute;
+mod fileops;
 mod import;
+mod project_modals;
 mod sidebar;
 mod sync;
 mod theme;
 mod top_bar;
+mod transfer_ctl;
 mod views;
 mod widgets;
 

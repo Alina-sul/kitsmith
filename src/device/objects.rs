@@ -31,11 +31,34 @@ pub struct SyncProgress {
     pub missed: usize,
 }
 
+/// One object the sync could not read, and how it failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissedObject {
+    /// e.g. `kit 07`, `pattern B03`, `pool sound 041`.
+    pub what: String,
+    /// True when sysex arrived but rytm-rs did not accept it (parse/version
+    /// problem); false when the device stayed silent (timeout).
+    pub got_reply: bool,
+}
+
+impl MissedObject {
+    pub fn describe(&self) -> String {
+        if self.got_reply {
+            format!("{} — reply received but not understood", self.what)
+        } else {
+            format!("{} — no reply within the timeout", self.what)
+        }
+    }
+}
+
 /// Outcome of a sync run.
 #[derive(Debug)]
 pub enum SyncOutcome {
-    /// Model built; `missed` objects went unanswered (0 = complete pull).
-    Complete { model: ProjectModel, missed: usize },
+    /// Model built; `missed` lists unread objects (empty = complete pull).
+    Complete {
+        model: ProjectModel,
+        missed: Vec<MissedObject>,
+    },
     /// Cancelled from the UI; nothing published.
     Cancelled,
     /// Too many consecutive silent objects — device gone or not listening.
@@ -51,47 +74,69 @@ pub fn sync_active_project(
     mut progress: impl FnMut(SyncProgress),
 ) -> Result<SyncOutcome, rytm_rs::error::RytmError> {
     let mut rytm = RytmProject::try_default()?;
-    let mut missed = 0usize;
+    let mut missed: Vec<MissedObject> = Vec::new();
     let mut consecutive_misses = 0usize;
 
-    let kit_queries: Vec<(&'static str, Vec<u8>)> = (0..128)
-        .map(|i| Ok(("kits", KitQuery::new(i)?.as_sysex()?)))
+    let kit_queries: Vec<(&'static str, String, Vec<u8>)> = (0..128)
+        .map(|i| {
+            Ok((
+                "kits",
+                format!("kit {:02}", i + 1),
+                KitQuery::new(i)?.as_sysex()?,
+            ))
+        })
         .collect::<Result<_, rytm_rs::error::RytmError>>()?;
-    let pattern_queries: Vec<(&'static str, Vec<u8>)> = (0..128)
-        .map(|i| Ok(("patterns", PatternQuery::new(i)?.as_sysex()?)))
+    let pattern_queries: Vec<(&'static str, String, Vec<u8>)> = (0..128)
+        .map(|i| {
+            Ok((
+                "patterns",
+                format!("pattern {}", crate::model::pattern_display_name(i)),
+                PatternQuery::new(i)?.as_sysex()?,
+            ))
+        })
         .collect::<Result<_, rytm_rs::error::RytmError>>()?;
-    let sound_queries: Vec<(&'static str, Vec<u8>)> = (0..128)
-        .map(|i| Ok(("pool sounds", SoundQuery::new(i)?.as_sysex()?)))
+    let sound_queries: Vec<(&'static str, String, Vec<u8>)> = (0..128)
+        .map(|i| {
+            Ok((
+                "pool sounds",
+                format!("pool sound {:03}", i + 1),
+                SoundQuery::new(i)?.as_sysex()?,
+            ))
+        })
         .collect::<Result<_, rytm_rs::error::RytmError>>()?;
 
-    let queries: Vec<(&'static str, Vec<u8>)> = kit_queries
+    let queries: Vec<(&'static str, String, Vec<u8>)> = kit_queries
         .into_iter()
         .chain(pattern_queries)
         .chain(sound_queries)
         .collect();
     let total = queries.len();
 
-    for (done, (stage, query)) in queries.into_iter().enumerate() {
+    for (done, (stage, what, query)) in queries.into_iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Ok(SyncOutcome::Cancelled);
         }
         if link.send(&query).is_err() {
             return Ok(SyncOutcome::DeviceSilent);
         }
-        if await_reply(link, &mut rytm, &query) {
-            consecutive_misses = 0;
-        } else {
-            missed += 1;
-            consecutive_misses += 1;
-            if consecutive_misses >= SYNC_MISS_LIMIT {
-                return Ok(SyncOutcome::DeviceSilent);
+        match await_reply(link, &mut rytm, &query) {
+            ReplyResult::Accepted => consecutive_misses = 0,
+            outcome => {
+                missed.push(MissedObject {
+                    what,
+                    got_reply: outcome == ReplyResult::ReceivedButRejected,
+                });
+                consecutive_misses += 1;
+                if consecutive_misses >= SYNC_MISS_LIMIT {
+                    return Ok(SyncOutcome::DeviceSilent);
+                }
             }
         }
         progress(SyncProgress {
             stage,
             done: done + 1,
             total,
-            missed,
+            missed: missed.len(),
         });
     }
 
@@ -101,10 +146,60 @@ pub fn sync_active_project(
     })
 }
 
+/// How waiting for one object's reply ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplyResult {
+    /// The reply to this query was accepted into the project.
+    Accepted,
+    /// Sysex arrived within the timeout but none of it answered the query —
+    /// the device spoke, rytm-rs could not parse it.
+    ReceivedButRejected,
+    /// Nothing arrived at all.
+    Silent,
+}
+
 /// Waits for the reply to `query`, feeding every received sysex to the
-/// project. Returns false when the timeout elapses with no matching message.
-fn await_reply(link: &MidiLink, rytm: &mut RytmProject, query: &[u8]) -> bool {
-    accept_reply(link, rytm, query).is_some()
+/// project, and reports how the wait ended.
+///
+/// An AR object that parses but belongs to a *different* query is a late
+/// reply to an earlier one: it is kept (the data is real) but does not end
+/// the wait, and does not count as this query having been answered.
+fn await_reply(link: &MidiLink, rytm: &mut RytmProject, query: &[u8]) -> ReplyResult {
+    let deadline = std::time::Instant::now() + OBJECT_REPLY_TIMEOUT;
+    let mut rejected_any = false;
+    loop {
+        let ran_out = |rejected_any: bool| {
+            if rejected_any {
+                ReplyResult::ReceivedButRejected
+            } else {
+                ReplyResult::Silent
+            }
+        };
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            return ran_out(rejected_any);
+        };
+        let Some(msg) = link.recv_timeout(remaining) else {
+            return ran_out(rejected_any);
+        };
+        if !apply_reply(rytm, &msg) {
+            rejected_any = true;
+            continue;
+        }
+        if is_reply_to(&msg, query) {
+            return ReplyResult::Accepted;
+        }
+    }
+}
+
+/// Feeds one message to the project, reporting whether it was understood.
+///
+/// rytm-rs can panic on objects it does not understand — treat that as a
+/// rejected reply, not an app crash.
+fn apply_reply(rytm: &mut RytmProject, msg: &[u8]) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rytm.update_from_sysex_response(msg).is_ok()
+    }))
+    .unwrap_or(false)
 }
 
 /// Byte offsets shared by every AR object message — query, response, and
@@ -139,7 +234,7 @@ pub fn accept_reply(link: &MidiLink, rytm: &mut RytmProject, query: &[u8]) -> Op
     loop {
         let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
         let msg = link.recv_timeout(remaining)?;
-        if rytm.update_from_sysex_response(&msg).is_ok() && is_reply_to(&msg, query) {
+        if apply_reply(rytm, &msg) && is_reply_to(&msg, query) {
             return Some(msg);
         }
     }

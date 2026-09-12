@@ -106,6 +106,7 @@ fn breadcrumb(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             ProjectTab::Kits => "Kits",
             ProjectTab::Samples => "Samples",
             ProjectTab::Patterns => "Patterns",
+            ProjectTab::SoundPool => "Sound Pool",
             ProjectTab::Overview => "Overview",
         };
         ui.label(RichText::new("/").color(theme::TEXT_MUTED));
@@ -159,11 +160,13 @@ fn sync_control(app: &mut RytmdashApp, ui: &mut egui::Ui, ctx: &egui::Context) {
             );
         }
         status => {
-            let enabled = in_port.is_some();
+            let enabled = in_port.is_some() && !app.device_busy();
             let response = ui
                 .add_enabled(enabled, egui::Button::new("⟳ Sync"))
                 .on_hover_text("Refresh device data")
-                .on_disabled_hover_text("Connect the Analog Rytm first");
+                .on_disabled_hover_text(
+                    "Connect the Analog Rytm and let any running device task finish",
+                );
             if response.clicked() {
                 if let Some(port) = in_port {
                     let repaint_ctx = ctx.clone();

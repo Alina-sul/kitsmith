@@ -47,4 +47,13 @@ pub trait DeviceBackend {
         kit_index: usize,
         track: usize,
     ) -> Result<Option<u8>, OpError>;
+
+    /// Sends one pre-encoded object write (kit/pattern/sound sysex).
+    fn send_object(&mut self, sysex: &[u8]) -> Result<(), OpError>;
+
+    /// Fresh-reads all 12 drum-track sample slots of a kit.
+    fn read_kit_sample_slots(&mut self, kit_index: usize) -> Result<Vec<Option<u8>>, OpError>;
+
+    /// Fresh-reads which kit a pattern links to.
+    fn read_pattern_kit_link(&mut self, pattern_index: usize) -> Result<usize, OpError>;
 }

@@ -8,7 +8,13 @@ use crate::gui::{theme, widgets};
 use crate::model::SAMPLE_SLOT_COUNT;
 
 pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
-    let Some(model) = app.model.as_ref() else {
+    let model = match app.ui_state.project {
+        crate::gui::app::ProjectSelection::Active => app.model.as_ref(),
+        crate::gui::app::ProjectSelection::Slot(id) => {
+            app.raw_models.get(&id).and_then(Option::as_ref)
+        }
+    };
+    let Some(model) = model else {
         return;
     };
     let linked_kits = model.linked_kit_indices().len();
@@ -45,10 +51,18 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 
     ui.add_space(theme::GAP_L);
     widgets::inspector_group(ui, "DATA COMPLETENESS", |ui| {
-        ui.label(format!(
-            "Sample names resolved for {loaded} loaded slots; Sound Lock and Scene/Performance \
-             data are not indexed yet."
-        ));
+        if model.dependency_scan {
+            ui.label(format!(
+                "Sample names resolved for {loaded} loaded slots. Dependency graph complete: \
+                 kit tracks, Sound Pool, Sound Locks and sample plocks are indexed. \
+                 Scene/Performance data is not parsed yet."
+            ));
+        } else {
+            ui.label(format!(
+                "Sample names resolved for {loaded} loaded slots. This cache predates the \
+                 dependency scan — re-sync to index Sound Locks and sample plocks."
+            ));
+        }
         ui.label(
             RichText::new("Full details live in Device & Diagnostics.")
                 .color(theme::TEXT_MUTED)

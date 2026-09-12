@@ -3,8 +3,8 @@
 
 use eframe::egui::{self, RichText};
 
-use crate::gui::app::{ago, page_title, ProjectSelection, ProjectTab, RytmdashApp};
-use crate::gui::views::{kits, overview, patterns, samples};
+use crate::gui::app::{ago, epoch_ago, page_title, ProjectSelection, ProjectTab, RytmdashApp};
+use crate::gui::views::{kits, overview, patterns, pool, samples};
 use crate::gui::{theme, widgets};
 use crate::model::names;
 
@@ -15,10 +15,12 @@ pub fn show(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     }
 }
 
-/// A +Drive project slot whose contents are not indexed yet (WP11). The UI is
-/// honest about that instead of faking contents (PRD §27), and hosts the
-/// local-label editor — the rename Rytmdash can offer today.
+/// A +Drive project slot: when its raw backup exists, the **full dashboard**
+/// (kits / samples / patterns tabs) rendered read-only from the decoded
+/// snapshot; otherwise the label editor, backup state, and an index button.
 fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
+    app.ensure_raw_snapshot(id);
+    app.ensure_raw_model(id);
     let native_name = app
         .model
         .as_ref()
@@ -56,24 +58,122 @@ fn unindexed_project(app: &mut RytmdashApp, ui: &mut egui::Ui, id: u32) {
         }
         None => page_title(ui, &native_display),
     }
-    ui.add_space(theme::GAP_L);
-
-    alias_editor(app, ui, id, &native_name, alias.as_deref());
-
-    widgets::inspector_group(ui, "NOT INDEXED", |ui| {
-        ui.label(
-            "Rytmdash can list this +Drive project slot but has not indexed its contents yet.",
-        );
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Browsing kits and samples of non-active projects arrives with the project \
-                 indexer milestone. Until then, load the project on the device and press Sync \
-                 to inspect it.",
-            )
-            .color(theme::TEXT_SECONDARY),
-        );
+    ui.add_space(theme::GAP_S);
+    ui.horizontal(|ui| {
+        let busy = app.device_busy();
+        if ui
+            .add_enabled(!busy, egui::Button::new("Rename on device…"))
+            .on_hover_text("Writes the native name into the project slot (verified).")
+            .clicked()
+        {
+            app.ui_state.rename_modal_slot = Some(id);
+            app.ui_state.rename_draft = names::clean(&native_name).to_owned();
+        }
+        if let Some(backup) = app.manifest.get(&id) {
+            widgets::badge(ui, "SNAPSHOT", theme::TEXT_MUTED);
+            ui.label(
+                RichText::new(format!(
+                    "read-only · from the backup taken {}",
+                    epoch_ago(backup.taken_at)
+                ))
+                .color(theme::TEXT_MUTED)
+                .size(theme::FONT_META),
+            );
+        }
     });
+    ui.add_space(theme::GAP_S);
+
+    let _ = egui::CollapsingHeader::new(
+        RichText::new("LOCAL LABEL & BACKUP")
+            .color(theme::TEXT_MUTED)
+            .size(theme::FONT_META)
+            .strong(),
+    )
+    .default_open(false)
+    .show(ui, |ui| {
+        alias_editor(app, ui, id, &native_name, alias.as_deref());
+        widgets::inspector_group(ui, "LOCAL BACKUP", |ui| match app.manifest.get(&id) {
+            Some(backup) => {
+                widgets::detail_line(ui, "Status", "Backed up on this computer");
+                let form = if backup.raw {
+                    "raw"
+                } else {
+                    "compressed, older format"
+                };
+                widgets::detail_line(ui, "Size", &format!("{} KB ({form})", backup.bytes / 1024));
+                widgets::detail_line(ui, "Fingerprint", &format!("{:08x}", backup.crc));
+                widgets::detail_line(ui, "Name at backup", &backup.name);
+            }
+            None => {
+                ui.label(RichText::new("No local backup yet.").color(theme::TEXT_MUTED));
+            }
+        });
+    })
+    .header_response
+    .on_hover_cursor(egui::CursorIcon::PointingHand);
+    ui.add_space(theme::GAP_S);
+
+    let mut index_now = false;
+    match app.raw_models.get(&id).and_then(Option::as_ref) {
+        Some(_) => {
+            // Full read-only dashboard: the same tabs as the active project,
+            // rendered from the decoded snapshot.
+            tab_row(app, ui);
+            ui.add_space(theme::GAP_M);
+            match app.ui_state.tab {
+                ProjectTab::Kits => kits::show(app, ui),
+                ProjectTab::Samples => samples::show(app, ui),
+                ProjectTab::Patterns => patterns::show(app, ui),
+                ProjectTab::SoundPool => pool::show(app, ui),
+                ProjectTab::Overview => overview::show(app, ui),
+            }
+        }
+        None => {
+            widgets::inspector_group(ui, "CONTENTS NOT INDEXED", |ui| {
+                if app.manifest.contains_key(&id) {
+                    ui.label(
+                        "This slot's backup is in the older compressed format, which cannot be \
+                         parsed.",
+                    );
+                } else {
+                    ui.label("No local backup of this slot yet.");
+                }
+                ui.label(
+                    RichText::new(
+                        "Index it to see this project's kits, patterns and samples here — and \
+                         to copy kits out of it.",
+                    )
+                    .color(theme::TEXT_SECONDARY),
+                );
+                ui.add_space(4.0);
+                let ready = app.connected_in_port().is_some() && !app.device_busy();
+                if app.backup.is_running() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Downloading…");
+                    });
+                } else if ui
+                    .add_enabled(ready, egui::Button::new("Index this project (~10 s)"))
+                    .on_disabled_hover_text(
+                        "Connect the Rytm and let any running device task finish",
+                    )
+                    .clicked()
+                {
+                    index_now = true;
+                }
+            });
+        }
+    }
+
+    if index_now {
+        if let Some(port) = app.connected_in_port() {
+            let ctx = ui.ctx().clone();
+            app.backup
+                .start(port, vec![(id, native_name.clone())], move || {
+                    ctx.request_repaint();
+                });
+        }
+    }
 }
 
 /// The local-label editor (PRD §32): a rename that lives in Rytmdash only.
@@ -156,6 +256,7 @@ fn active_project(app: &mut RytmdashApp, ui: &mut egui::Ui) {
         ProjectTab::Kits => kits::show(app, ui),
         ProjectTab::Samples => samples::show(app, ui),
         ProjectTab::Patterns => patterns::show(app, ui),
+        ProjectTab::SoundPool => pool::show(app, ui),
         ProjectTab::Overview => overview::show(app, ui),
     }
 }
@@ -163,7 +264,30 @@ fn active_project(app: &mut RytmdashApp, ui: &mut egui::Ui) {
 /// Project header (PRD §8): name, live/cached/partial state, sync timestamp.
 fn header(app: &mut RytmdashApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        page_title(ui, "Active project");
+        // The device never reports which project is loaded; when the synced
+        // contents match one of the local backups, surface that clearly as a
+        // best-effort identification.
+        match app.active_guess {
+            Some(slot) => {
+                let name = app
+                    .manifest
+                    .get(&slot)
+                    .map(|b| b.name.clone())
+                    .unwrap_or_default();
+                page_title(ui, names::project_display_name(&name, slot).text());
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!("Active project · matches backup {slot:03}"))
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::FONT_META),
+                )
+                .on_hover_text(
+                    "Best match of kit names and sample content against your local backups — \
+                     the device does not report which project is loaded, so this is inferred.",
+                );
+            }
+            None => page_title(ui, "Active project"),
+        }
         ui.add_space(theme::GAP_S);
         let connected = app.connected_in_port().is_some();
         match (&app.model, app.last_sync) {
@@ -212,6 +336,7 @@ fn tab_row(app: &mut RytmdashApp, ui: &mut egui::Ui) {
             (ProjectTab::Kits, "Kits"),
             (ProjectTab::Samples, "Samples"),
             (ProjectTab::Patterns, "Patterns"),
+            (ProjectTab::SoundPool, "Sound Pool"),
             (ProjectTab::Overview, "Overview"),
         ] {
             let selected = app.ui_state.tab == tab;

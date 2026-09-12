@@ -2953,6 +2953,7 @@ dependencies = [
  "hound",
  "midir",
  "rytm-rs",
+ "rytm-sys",
  "serde",
  "serde_json",
 ]

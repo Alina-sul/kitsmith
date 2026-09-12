@@ -12,5 +12,6 @@ pub mod import_page;
 pub mod kits;
 pub mod overview;
 pub mod patterns;
+pub mod pool;
 pub mod project;
 pub mod samples;

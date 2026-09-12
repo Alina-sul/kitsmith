@@ -16,7 +16,8 @@ through the preview modal.
 | `views/project.rs` | Project workspace header, LIVE/CACHED/PARTIAL state, tab row |
 | `views/kits.rs` | Kit list (filters/search), 12-pad grid, track inspector, sample rail |
 | `views/samples.rs` | All 127 project sample slots as a table + usage inspector |
-| `views/patterns.rs` | 8×16 pattern map with kit links |
+| `views/patterns.rs` | 8×16 pattern map with kit links + dependency inspector |
+| `views/pool.rs` | Sound Pool inventory with Sound-Lock usage |
 | `views/overview.rs` | Project stat cards + completeness notes |
 | `views/drive.rs` | +Drive files known from loaded slots (full browser is a later milestone) |
 | `views/import_page.rs` | Batch import queue table |
@@ -25,6 +26,8 @@ through the preview modal.
 | `widgets.rs` | Shared pills/badges/rows/inspector groups |
 | `execute.rs` | Plan preview modal (intent-named) + execution worker |
 | `import.rs` | Import queue model + SDS upload workers |
+| `backup.rs` | Full-device project backup worker (data-read protocol) |
+| `transfer_ctl.rs` | Pattern-capture worker for cross-project transfer |
 | `sync.rs` | Sync worker controller |
 
 ## Conventions

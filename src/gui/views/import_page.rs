@@ -11,6 +11,7 @@ pub fn show(
     ui: &mut egui::Ui,
     import: &mut ImportPanel,
     device_in_port: Option<&str>,
+    device_busy: bool,
     ctx: &egui::Context,
 ) {
     page_title(ui, "Import");
@@ -39,7 +40,7 @@ pub fn show(
         return;
     }
 
-    toolbar(ui, import, device_in_port, ctx);
+    toolbar(ui, import, device_in_port, device_busy, ctx);
     ui.add_space(theme::GAP_S);
 
     let mut to_remove = None;
@@ -87,6 +88,7 @@ fn toolbar(
     ui: &mut egui::Ui,
     import: &mut ImportPanel,
     device_in_port: Option<&str>,
+    device_busy: bool,
     ctx: &egui::Context,
 ) {
     ui.horizontal(|ui| {
@@ -97,14 +99,16 @@ fn toolbar(
             import.set_all_selected(false);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let busy = import.is_uploading();
+            let uploading = import.is_uploading();
             let response = ui
                 .add_enabled(
-                    device_in_port.is_some() && !busy,
+                    device_in_port.is_some() && !device_busy,
                     egui::Button::new("⇪ Upload selected"),
                 )
-                .on_disabled_hover_text(if busy {
+                .on_disabled_hover_text(if uploading {
                     "An upload batch is already running — samples transfer one at a time."
+                } else if device_busy {
+                    "Another device operation is running"
                 } else {
                     "Connect the Analog Rytm first"
                 });
@@ -113,7 +117,7 @@ fn toolbar(
                     import.upload_selected(port, ctx);
                 }
             }
-            if busy && ui.button("Cancel upload").clicked() {
+            if uploading && ui.button("Cancel upload").clicked() {
                 import.cancel_uploads();
             }
         });

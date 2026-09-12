@@ -34,8 +34,24 @@ const HEADER: [u8; 6] = [0xF0, 0x00, 0x20, 0x3C, 0x10, 0x00];
 const OP_PING: u8 = 0x01;
 const OP_SAMPLE_READ_DIR: u8 = 0x10;
 const OP_RAM_READ: u8 = 0x17;
+const OP_RAM_LOAD_SLOT: u8 = 0x19;
 const OP_SAMPLE_INFO_FROM_HASH_SIZE: u8 = 0x23;
 const OP_DATA_LIST: u8 = 0x53;
+const OP_DATA_READ_OPEN: u8 = 0x54;
+const OP_DATA_READ_PARTIAL: u8 = 0x55;
+const OP_DATA_READ_CLOSE: u8 = 0x56;
+const OP_DATA_WRITE_OPEN: u8 = 0x57;
+const OP_DATA_WRITE_PARTIAL: u8 = 0x58;
+const OP_DATA_WRITE_CLOSE: u8 = 0x59;
+const OP_DATA_COPY: u8 = 0x5B;
+
+/// Chunk size requested per partial data read (matches Transfer/elektroid).
+const DATA_CHUNK_BYTES: u32 = 0x2000;
+
+/// Upper bound on chunks accepted for one data download. A project slot is
+/// 2 MB (~256 chunks); anything past this means the device never raised the
+/// `last` flag, so stop instead of looping forever.
+const MAX_DATA_CHUNKS: usize = 1024;
 
 /// The data filesystem path that holds the 128 project slots.
 pub const PROJECTS_PATH: &str = "/projects";
@@ -68,6 +84,25 @@ pub struct RamSlot {
     pub hash: u32,
     pub size: u32,
     pub used: bool,
+}
+
+/// One downloaded data item (e.g. a project slot's raw payload).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataDownload {
+    pub bytes: Vec<u8>,
+    /// The compression flag the device reported for this transfer; the
+    /// payload is stored as received either way.
+    pub compressed: bool,
+}
+
+/// One chunk of a data download (a `DATA_READ_PARTIAL` reply).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataChunk {
+    pub last: bool,
+    /// CRC the device reports for this chunk (semantics hardware-verified
+    /// via the probe; see `docs/hardware-verification.md`).
+    pub crc: u32,
+    pub data: Vec<u8>,
 }
 
 /// Stateful client: owns the request sequence counter.
@@ -123,6 +158,147 @@ impl FileClient {
         body.extend_from_slice(&size.to_be_bytes());
         let reply = self.transact(link, &body)?;
         parse_hash_path(&reply)
+    }
+
+    /// Downloads one data item (e.g. `/projects/2`) chunk by chunk.
+    /// Read-only on the device. `compressed` asks the device to compress the
+    /// transfer (what Transfer does); `false` requests the raw payload.
+    /// `on_chunk` receives each received chunk and the total byte count.
+    pub fn download_data(
+        &mut self,
+        link: &mut MidiLink,
+        path: &str,
+        compressed: bool,
+        mut on_chunk: impl FnMut(&DataChunk, usize),
+    ) -> Option<DataDownload> {
+        let mut body = vec![OP_DATA_READ_OPEN];
+        push_path(&mut body, path);
+        body.extend_from_slice(&DATA_CHUNK_BYTES.to_be_bytes());
+        body.push(u8::from(compressed));
+        let reply = self.transact(link, &body)?;
+        let (jid, compressed) = parse_data_open(&reply)?;
+
+        let mut bytes = Vec::new();
+        let mut chunk_seq: u32 = 0;
+        loop {
+            let mut body = vec![OP_DATA_READ_PARTIAL];
+            body.extend_from_slice(&jid.to_be_bytes());
+            body.extend_from_slice(&chunk_seq.to_be_bytes());
+            let reply = self.transact(link, &body)?;
+            let chunk = parse_data_chunk(&reply)?;
+            // A backup nobody can trust is worse than a failed one: reject
+            // the whole download rather than store a corrupted payload.
+            if !chunk.data.is_empty() && chunk.crc != chunk_crc(&chunk.data) {
+                return None;
+            }
+            bytes.extend_from_slice(&chunk.data);
+            on_chunk(&chunk, bytes.len());
+            chunk_seq = chunk_seq.wrapping_add(1);
+            if chunk.last {
+                break;
+            }
+            if chunk_seq as usize > MAX_DATA_CHUNKS {
+                return None;
+            }
+        }
+
+        let mut body = vec![OP_DATA_READ_CLOSE];
+        body.extend_from_slice(&jid.to_be_bytes());
+        // Close failure doesn't invalidate already-received bytes.
+        let _ = self.transact(link, &body);
+        Some(DataDownload { bytes, compressed })
+    }
+
+    /// Uploads one data item (e.g. a whole project payload to
+    /// `/projects/8`). Chunked with per-chunk CRC; the close reply echoes
+    /// the byte count, which is verified. `progress` receives bytes sent.
+    pub fn upload_data(
+        &mut self,
+        link: &mut MidiLink,
+        path: &str,
+        payload: &[u8],
+        mut progress: impl FnMut(usize),
+    ) -> Result<(), String> {
+        let mut body = vec![OP_DATA_WRITE_OPEN];
+        body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        push_path(&mut body, path);
+        let reply = self
+            .transact(link, &body)
+            .ok_or("write-open got no reply")?;
+        if reply.get(5) != Some(&1) {
+            return Err("device refused the data write".into());
+        }
+        let jid = try_be_u32(&reply, 6).ok_or("write-open reply too short for a job id")?;
+
+        let mut sent = 0usize;
+        for (chunk_seq, chunk) in payload.chunks(DATA_CHUNK_BYTES as usize).enumerate() {
+            let mut body = vec![OP_DATA_WRITE_PARTIAL];
+            body.extend_from_slice(&jid.to_be_bytes());
+            body.extend_from_slice(&(chunk_seq as u32).to_be_bytes());
+            body.extend_from_slice(&chunk_crc(chunk).to_be_bytes());
+            body.extend_from_slice(&(chunk.len() as u32).to_be_bytes());
+            body.extend_from_slice(chunk);
+            let reply = self
+                .transact(link, &body)
+                .ok_or("write-partial got no reply")?;
+            if reply.get(5) != Some(&1) {
+                return Err(format!("device rejected chunk {chunk_seq}"));
+            }
+            sent += chunk.len();
+            progress(sent);
+        }
+
+        let mut body = vec![OP_DATA_WRITE_CLOSE];
+        body.extend_from_slice(&jid.to_be_bytes());
+        body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        let reply = self
+            .transact(link, &body)
+            .ok_or("write-close got no reply")?;
+        if reply.get(5) != Some(&1) {
+            return Err("device refused to close the data write".into());
+        }
+        let received =
+            try_be_u32(&reply, 10).ok_or("write-close reply too short for a byte count")? as usize;
+        if received != payload.len() {
+            return Err(format!(
+                "device reports {received} bytes received, sent {}",
+                payload.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Copies one data item to another slot (e.g. `/projects/20` →
+    /// `/projects/8`). The device does the copy; nothing is transferred.
+    pub fn copy_data(&mut self, link: &mut MidiLink, src: &str, dst: &str) -> Result<(), String> {
+        let mut body = vec![OP_DATA_COPY];
+        push_path(&mut body, src);
+        push_path(&mut body, dst);
+        let reply = self.transact(link, &body).ok_or("copy got no reply")?;
+        if reply.get(5) != Some(&1) {
+            return Err("device refused the copy".into());
+        }
+        Ok(())
+    }
+
+    /// Asks the device to load a +Drive sample file into a project RAM slot
+    /// (the SAMPLES → LOAD TO PROJ operation, remotely).
+    pub fn ram_load_slot(
+        &mut self,
+        link: &mut MidiLink,
+        drive_path: &str,
+        slot: u8,
+    ) -> Result<(), String> {
+        let mut body = vec![OP_RAM_LOAD_SLOT, 0];
+        push_path(&mut body, drive_path);
+        body.push(0xFF); // track: none — load into the slot only
+        body.extend_from_slice(&u16::from(slot).to_be_bytes());
+        body.push(0x01);
+        let reply = self.transact(link, &body).ok_or("load got no reply")?;
+        if reply.get(5) != Some(&1) {
+            return Err("device refused to load the sample into the slot".into());
+        }
+        Ok(())
     }
 
     /// Sends `body` (opcode + args) and waits for its matching reply,
@@ -190,6 +366,7 @@ pub fn enrich_model(
                     name,
                     path,
                     size: slot.size,
+                    hash: slot.hash,
                 });
             }
         }
@@ -362,6 +539,53 @@ pub fn parse_ram_slots(reply: &[u8]) -> Option<Vec<RamSlot>> {
     Some(slots)
 }
 
+/// Parses a `DATA_READ_OPEN` reply: status at 5 (non-zero = ok), job id at
+/// 6, chunk size at 10, compression flag at 14.
+pub fn parse_data_open(reply: &[u8]) -> Option<(u32, bool)> {
+    if reply.len() < 15 || reply[5] == 0 {
+        return None;
+    }
+    Some((be_u32(reply, 6), reply[14] != 0))
+}
+
+/// Parses a `DATA_READ_PARTIAL` reply: status at 5, job id at 6, chunk seq
+/// at 10, status word at 14, last flag at 18, crc at 19, size at 23, data
+/// from 27.
+pub fn parse_data_chunk(reply: &[u8]) -> Option<DataChunk> {
+    if reply.len() < 27 || reply[5] == 0 {
+        return None;
+    }
+    let size = be_u32(reply, 23) as usize;
+    let data = reply.get(27..27 + size)?.to_vec();
+    Some(DataChunk {
+        last: reply[18] != 0,
+        crc: be_u32(reply, 19),
+        data,
+    })
+}
+
+/// The chunk checksum the device speaks: standard CRC-32 (IEEE), i.e. a
+/// running register starting at `0xFFFFFFFF`, hardware-matched against AR
+/// MKII OS 1.72 (`docs/hardware-verification.md`). Named so the sending and
+/// verifying sides can never drift to different variants.
+pub fn chunk_crc(data: &[u8]) -> u32 {
+    crc32(0, data)
+}
+
+/// CRC-32 (IEEE, zlib-compatible) over `data` starting from `init` as the
+/// running value — used to check device-reported chunk CRCs. Pass 0 for the
+/// standard zlib result; the probe determines which init the device uses.
+pub fn crc32(init: u32, data: &[u8]) -> u32 {
+    let mut crc = !init;
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xEDB8_8320 & (0u32.wrapping_sub(crc & 1)));
+        }
+    }
+    !crc
+}
+
 /// Parses a hash→path reply: status at byte 5 (1 = found), path cstr at 14.
 pub fn parse_hash_path(reply: &[u8]) -> Option<String> {
     if reply.get(5) != Some(&1) || reply.len() <= 14 {
@@ -390,4 +614,11 @@ fn read_cstr(data: &[u8], pos: &mut usize) -> String {
 
 fn be_u32(data: &[u8], pos: usize) -> u32 {
     u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+}
+
+/// Bounds-checked [`be_u32`], for replies whose length was not validated up
+/// front — a short reply must be an error, never a panic on a worker thread.
+fn try_be_u32(data: &[u8], pos: usize) -> Option<u32> {
+    let field: [u8; 4] = data.get(pos..pos + 4)?.try_into().ok()?;
+    Some(u32::from_be_bytes(field))
 }

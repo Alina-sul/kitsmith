@@ -89,3 +89,52 @@ fn pattern_names_match_device_banks() {
     assert_eq!(pattern_display_name(16), "B01");
     assert_eq!(pattern_display_name(127), "H16");
 }
+
+#[test]
+fn sound_locks_are_scanned_into_the_dependency_graph() {
+    let (mut rytm, _) = default_model();
+    // Pattern 2, track 0, trig 4 sound-locks pool sound 7…
+    rytm.patterns_mut()[2].tracks_mut()[0].trigs_mut()[4]
+        .set_sound_lock(7)
+        .unwrap();
+    // …and pool sound 7 references sample slot 42.
+    rytm.pool_sounds_mut()[7]
+        .sample_mut()
+        .set_slice_number(42)
+        .unwrap();
+
+    let model = ProjectModel::from_rytm(&rytm);
+    assert!(model.dependency_scan);
+    assert_eq!(model.patterns[2].sound_locks, vec![7]);
+    assert_eq!(model.patterns_sound_locking(7), vec![2]);
+
+    let refs = model.slot_references(42);
+    assert!(refs.kit_uses.is_empty());
+    assert_eq!(refs.pool_uses.len(), 1);
+    assert_eq!(refs.pool_uses[0].pool_index, 7);
+    assert_eq!(refs.pool_uses[0].patterns, vec![2]);
+    // A slot used only through a Sound Lock chain is NOT safe to unload.
+    assert_eq!(model.safe_to_unload(42), Some(false));
+    assert_eq!(model.safe_to_unload(99), Some(true));
+}
+
+#[test]
+fn sample_plocks_are_scanned_into_the_dependency_graph() {
+    let (mut rytm, _) = default_model();
+    rytm.patterns_mut()[5].tracks_mut()[3].trigs_mut()[0]
+        .plock_set_sample_number(23)
+        .unwrap();
+
+    let model = ProjectModel::from_rytm(&rytm);
+    assert_eq!(model.patterns[5].plocked_sample_slots, vec![23]);
+    let refs = model.slot_references(23);
+    assert_eq!(refs.plock_patterns, vec![5]);
+    assert_eq!(model.safe_to_unload(23), Some(false));
+}
+
+#[test]
+fn old_caches_report_incomplete_dependency_data() {
+    let model = ProjectModel::default();
+    assert!(!model.dependency_scan);
+    assert_eq!(model.safe_to_unload(1), None);
+}
