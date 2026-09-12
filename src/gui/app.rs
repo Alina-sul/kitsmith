@@ -126,6 +126,19 @@ pub struct UiState {
     pub sync_confirm: Option<usize>,
     /// Sidebar "Rearrange" mode: shows empty slots and enables project drag.
     pub rearrange: bool,
+    /// +Drive rename modal: the entry being renamed + the draft name.
+    pub drive_rename: Option<crate::gui::drive_modals::DriveTarget>,
+    pub drive_rename_draft: String,
+    /// +Drive move modal: the entry being moved + the destination draft.
+    pub drive_move: Option<crate::gui::drive_modals::DriveTarget>,
+    pub drive_move_dest: String,
+    /// +Drive new-folder modal (creates inside `drive_path`).
+    pub drive_new_folder_open: bool,
+    pub drive_new_folder_draft: String,
+    /// +Drive delete modal (entry + reference scan + typed confirmation).
+    pub drive_delete: Option<crate::gui::drive_modals::DriveDeleteModal>,
+    /// Refresh to apply when the launched +Drive plan reports success.
+    pub pending_drive: Option<crate::gui::drive_modals::DriveRefresh>,
 }
 
 /// When the last sync finished and how complete it was.
@@ -663,6 +676,7 @@ impl eframe::App for KitsmithApp {
             });
 
         project_modals::show(self, &ctx);
+        crate::gui::drive_modals::show(self, &ctx);
 
         // Plan preview / execution modal, if a drag landed.
         let in_port = self.connected_in_port();
@@ -670,13 +684,51 @@ impl eframe::App for KitsmithApp {
             .execute
             .show(&ctx, in_port.as_deref(), self.model.as_ref())
         {
+            let mut drive_outcome = None;
+            if let Some(refresh) = self.ui_state.pending_drive.take() {
+                // Even a stopped plan may have changed the device (a write
+                // that landed but failed verification) — re-fetch either way
+                // so the browser never renders a pre-write listing as truth.
+                for dir in &refresh.invalidate {
+                    self.drive.invalidate(dir);
+                }
+                if report.succeeded() {
+                    // A moved/renamed file keeps its content hash, so the
+                    // loaded slot keeps resolving — mirror the new path.
+                    // Compare case-insensitively: hash lookups (0x23) have
+                    // returned lowercase paths while listings keep case.
+                    if let (Some((old, new)), Some(model)) = (&refresh.path_patch, &mut self.model)
+                    {
+                        for sample in model
+                            .samples
+                            .iter_mut()
+                            .filter(|s| s.path.eq_ignore_ascii_case(old))
+                        {
+                            sample.path = new.clone();
+                            sample.name = new.rsplit('/').next().unwrap_or(new.as_str()).to_owned();
+                        }
+                        if let Err(e) = cache::save(model) {
+                            self.toast(format!("cache write failed: {e}"));
+                        }
+                    }
+                    drive_outcome = Some(refresh.outcome);
+                }
+            }
             let (kind, title) = if report.succeeded() {
-                (ActivityKind::Success, "Plan completed".to_owned())
+                (
+                    ActivityKind::Success,
+                    drive_outcome
+                        .clone()
+                        .unwrap_or_else(|| "Plan completed".to_owned()),
+                )
             } else {
                 (ActivityKind::Error, "Plan stopped".to_owned())
             };
             let detail = report.completed.join("\n");
             self.log_activity(kind, title, Some(detail));
+            if let Some(outcome) = drive_outcome {
+                self.toast(format!("{outcome} — verified"));
+            }
             if let Some(draft) = self.ui_state.kits.pending_save.take() {
                 let kit_label = self
                     .model

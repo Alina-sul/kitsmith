@@ -26,6 +26,34 @@ impl DriveBrowser {
             .cloned()
     }
 
+    /// True while a directory fetch is in flight (plan launches wait for it —
+    /// one file-protocol conversation at a time on the port).
+    pub fn is_loading(&self) -> bool {
+        self.loading
+            .lock()
+            .expect("drive loading lock poisoned")
+            .is_some()
+    }
+
+    /// Drops one cached listing so the next render re-fetches it (call after
+    /// any write that changed the directory).
+    pub fn invalidate(&self, path: &str) {
+        self.cache
+            .lock()
+            .expect("drive cache lock poisoned")
+            .remove(path);
+    }
+
+    /// The directories fetched this session (for move-target pickers).
+    pub fn cached_dirs(&self) -> Vec<String> {
+        self.cache
+            .lock()
+            .expect("drive cache lock poisoned")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     /// Fetches `path` unless cached or a fetch is already running.
     pub fn request(&self, in_port: String, path: String, on_change: impl Fn() + Send + 'static) {
         {

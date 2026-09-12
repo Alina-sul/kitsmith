@@ -1,7 +1,9 @@
 //! The device-mutation interface plans execute against.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use crate::device::files::{DriveEntry, RamSlot};
 
 /// Failure of a single operation step.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,4 +73,34 @@ pub trait DeviceBackend {
         kit_index: usize,
         fields: &[crate::model::edit::KitField],
     ) -> Result<Vec<crate::model::edit::FieldValue>, OpError>;
+
+    /// Fresh-lists one +Drive sample directory.
+    fn list_sample_dir(&mut self, path: &str) -> Result<Vec<DriveEntry>, OpError>;
+
+    /// Renames a +Drive file (a `dst` in another directory moves it).
+    fn rename_sample_path(&mut self, src: &str, dst: &str) -> Result<(), OpError>;
+
+    /// Creates a +Drive directory.
+    fn create_sample_dir(&mut self, path: &str) -> Result<(), OpError>;
+
+    /// Deletes an (empty) +Drive directory.
+    fn delete_sample_dir(&mut self, path: &str) -> Result<(), OpError>;
+
+    /// Deletes one +Drive sample file. Irreversible — the plan must have
+    /// downloaded a local copy first.
+    fn delete_sample_file(&mut self, path: &str) -> Result<(), OpError>;
+
+    /// Fresh-reads the active project's RAM sample-slot table.
+    fn ram_sample_slots(&mut self) -> Result<Vec<RamSlot>, OpError>;
+
+    /// Downloads one +Drive sample and stores it as a WAV under `dest` plus
+    /// a JSON sidecar naming its origin (`path`, `hash`, `size`) — the local
+    /// pre-delete backup. Returns the WAV path written.
+    fn download_sample_to(
+        &mut self,
+        path: &str,
+        dest: &Path,
+        hash: u32,
+        size: u32,
+    ) -> Result<PathBuf, OpError>;
 }

@@ -33,9 +33,16 @@ const HEADER: [u8; 6] = [0xF0, 0x00, 0x20, 0x3C, 0x10, 0x00];
 
 const OP_PING: u8 = 0x01;
 const OP_SAMPLE_READ_DIR: u8 = 0x10;
+const OP_SAMPLE_CREATE_DIR: u8 = 0x11;
+const OP_SAMPLE_DELETE_DIR: u8 = 0x12;
 const OP_RAM_READ: u8 = 0x17;
 const OP_RAM_LOAD_SLOT: u8 = 0x19;
+const OP_SAMPLE_DELETE_FILE: u8 = 0x20;
+const OP_SAMPLE_RENAME: u8 = 0x21;
 const OP_SAMPLE_INFO_FROM_HASH_SIZE: u8 = 0x23;
+const OP_SAMPLE_READ_OPEN: u8 = 0x30;
+const OP_SAMPLE_READ_CLOSE: u8 = 0x31;
+const OP_SAMPLE_READ_BLOCK: u8 = 0x32;
 const OP_DATA_LIST: u8 = 0x53;
 const OP_DATA_READ_OPEN: u8 = 0x54;
 const OP_DATA_READ_PARTIAL: u8 = 0x55;
@@ -47,6 +54,16 @@ const OP_DATA_COPY: u8 = 0x5B;
 
 /// Chunk size requested per partial data read (matches Transfer/elektroid).
 const DATA_CHUNK_BYTES: u32 = 0x2000;
+
+/// Bytes of sample payload requested per read block (matches Transfer).
+const SAMPLE_READ_BLOCK_BYTES: u32 = 0x2000;
+
+/// Offset of the payload bytes inside a sample read-block reply.
+const SAMPLE_READ_PAYLOAD_OFFSET: usize = 22;
+
+/// A sample file starts with a 64-byte header (type, stereo flag, byte size,
+/// rate, loop points, padding) ahead of the big-endian 16-bit PCM data.
+const SAMPLE_FILE_HEADER_LEN: usize = 64;
 
 /// The data filesystem path that holds the 128 project slots.
 pub const PROJECTS_PATH: &str = "/projects";
@@ -90,6 +107,17 @@ pub struct DataDownload {
     pub compressed: bool,
 }
 
+/// One downloaded +Drive sample: decoded header fields + little-endian PCM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SampleDownload {
+    /// 16-bit PCM, byte-swapped to little-endian (the wire is big-endian).
+    pub pcm_le: Vec<u8>,
+    /// True for stereo-interleaved data (header flag; AR native is mono).
+    pub stereo: bool,
+    /// Sample rate from the header (48 000 for device-native files).
+    pub rate: u32,
+}
+
 /// One chunk of a data download (a `DATA_READ_PARTIAL` reply).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataChunk {
@@ -100,11 +128,15 @@ pub struct DataChunk {
     pub data: Vec<u8>,
 }
 
-/// Stateful client: owns the request sequence counter.
+/// Request sequence numbers come from one process-wide counter, so replies
+/// can never cross-match between concurrent clients on the same port (e.g.
+/// the +Drive browser and a running ops plan): `transact` matches replies by
+/// (seq, opcode), and distinct clients now never share a seq.
+static NEXT_SEQ: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+/// Stateful file-protocol client.
 #[derive(Default)]
-pub struct FileClient {
-    seq: u16,
-}
+pub struct FileClient {}
 
 impl FileClient {
     pub fn new() -> Self {
@@ -215,7 +247,7 @@ impl FileClient {
         if reply.get(5) != Some(&1) {
             return Err("device refused the data write".into());
         }
-        let jid = be_u32(&reply, 6);
+        let jid = be_u32_checked(&reply, 6).ok_or("write-open reply came back short")?;
 
         let mut sent = 0usize;
         for (chunk_seq, chunk) in payload.chunks(DATA_CHUNK_BYTES as usize).enumerate() {
@@ -244,7 +276,8 @@ impl FileClient {
         if reply.get(5) != Some(&1) {
             return Err("device refused to close the data write".into());
         }
-        let received = be_u32(&reply, 10) as usize;
+        let received =
+            be_u32_checked(&reply, 10).ok_or("write-close reply came back short")? as usize;
         if received != payload.len() {
             return Err(format!(
                 "device reports {received} bytes received, sent {}",
@@ -287,11 +320,120 @@ impl FileClient {
         Ok(())
     }
 
+    /// Creates a +Drive sample directory.
+    pub fn create_sample_dir(&mut self, link: &mut MidiLink, path: &str) -> Result<(), String> {
+        let reply = self
+            .transact(link, &path_op_body(OP_SAMPLE_CREATE_DIR, &[path]))
+            .ok_or("create-directory got no reply")?;
+        expect_ok(&reply, "create the directory")
+    }
+
+    /// Deletes a +Drive sample directory (the device refuses non-empty ones;
+    /// callers must preflight emptiness anyway and never rely on that).
+    pub fn delete_sample_dir(&mut self, link: &mut MidiLink, path: &str) -> Result<(), String> {
+        let reply = self
+            .transact(link, &path_op_body(OP_SAMPLE_DELETE_DIR, &[path]))
+            .ok_or("delete-directory got no reply")?;
+        expect_ok(&reply, "delete the directory")
+    }
+
+    /// Deletes one +Drive sample file. Irreversible on the device side —
+    /// callers must have downloaded a local copy first (backup-first rule).
+    pub fn delete_sample_file(&mut self, link: &mut MidiLink, path: &str) -> Result<(), String> {
+        let reply = self
+            .transact(link, &path_op_body(OP_SAMPLE_DELETE_FILE, &[path]))
+            .ok_or("delete-file got no reply")?;
+        expect_ok(&reply, "delete the file")
+    }
+
+    /// Renames a +Drive sample file: `dst` is a full path, so a destination
+    /// in another directory moves the file. The content hash is unchanged —
+    /// project slot tables (which reference by hash) keep resolving.
+    pub fn rename_sample_path(
+        &mut self,
+        link: &mut MidiLink,
+        src: &str,
+        dst: &str,
+    ) -> Result<(), String> {
+        let reply = self
+            .transact(link, &path_op_body(OP_SAMPLE_RENAME, &[src, dst]))
+            .ok_or("rename got no reply")?;
+        expect_ok(&reply, "rename the file")
+    }
+
+    /// Downloads one +Drive sample file (open → block reads → close).
+    /// `progress` receives (received, total) raw byte counts.
+    pub fn download_sample(
+        &mut self,
+        link: &mut MidiLink,
+        path: &str,
+        mut progress: impl FnMut(usize, usize),
+    ) -> Result<SampleDownload, String> {
+        let mut body = vec![OP_SAMPLE_READ_OPEN];
+        push_path(&mut body, path);
+        let reply = self
+            .transact(link, &body)
+            .ok_or("sample-open got no reply")?;
+        match reply.get(5) {
+            Some(&1) => {}
+            // Factory content answers with its own status code.
+            Some(&2) => return Err("the device does not serve factory samples".into()),
+            _ => return Err("device refused to open the sample for reading".into()),
+        }
+        let id = be_u32_checked(&reply, 6).ok_or("sample-open reply came back short")?;
+        let total = be_u32_checked(&reply, 10).ok_or("sample-open reply came back short")? as usize;
+        if total < SAMPLE_FILE_HEADER_LEN {
+            // Leave nothing open on the device before bailing.
+            self.close_sample_read(link, id);
+            return Err(format!(
+                "sample reports only {total} bytes — not a sample file"
+            ));
+        }
+
+        let mut raw = Vec::with_capacity(total);
+        let result = loop {
+            if raw.len() >= total {
+                break Ok(());
+            }
+            let req = (total - raw.len()).min(SAMPLE_READ_BLOCK_BYTES as usize);
+            let mut body = vec![OP_SAMPLE_READ_BLOCK];
+            body.extend_from_slice(&id.to_be_bytes());
+            body.extend_from_slice(&(req as u32).to_be_bytes());
+            body.extend_from_slice(&(raw.len() as u32).to_be_bytes());
+            let Some(reply) = self.transact(link, &body) else {
+                break Err("sample-read got no reply".to_owned());
+            };
+            if let Err(e) = expect_ok(&reply, "read a sample block") {
+                break Err(e);
+            }
+            let Some(chunk) =
+                reply.get(SAMPLE_READ_PAYLOAD_OFFSET..SAMPLE_READ_PAYLOAD_OFFSET + req)
+            else {
+                break Err("sample block came back short".to_owned());
+            };
+            raw.extend_from_slice(chunk);
+            progress(raw.len(), total);
+        };
+
+        // Always close the read job — a mid-transfer failure must not leave
+        // it open (whether the device would refuse the next open is unknown).
+        self.close_sample_read(link, id);
+        result?;
+        parse_sample_file(&raw)
+    }
+
+    /// Best-effort close of a sample read job (failure doesn't invalidate
+    /// already-received bytes).
+    fn close_sample_read(&mut self, link: &mut MidiLink, id: u32) {
+        let mut body = vec![OP_SAMPLE_READ_CLOSE];
+        body.extend_from_slice(&id.to_be_bytes());
+        let _ = self.transact(link, &body);
+    }
+
     /// Sends `body` (opcode + args) and waits for its matching reply,
     /// returning the decoded reply message.
     fn transact(&mut self, link: &mut MidiLink, body: &[u8]) -> Option<Vec<u8>> {
-        let seq = self.seq;
-        self.seq = self.seq.wrapping_add(1);
+        let seq = NEXT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut msg = vec![(seq >> 8) as u8, (seq & 0xFF) as u8, 0, 0];
         msg.extend_from_slice(body);
         link.send(&frame(&msg)).ok()?;
@@ -373,6 +515,70 @@ pub fn enrich_model(
             .collect();
     }
     true
+}
+
+/// Builds a path-argument request body: opcode + each path NUL-terminated.
+/// Public so protocol tests can assert exact frames without a device.
+pub fn path_op_body(opcode: u8, paths: &[&str]) -> Vec<u8> {
+    let mut body = vec![opcode];
+    for path in paths {
+        push_path(&mut body, path);
+    }
+    body
+}
+
+/// Whether writes to this +Drive path must be refused: everything under the
+/// write-protected factory tree. Case-insensitive — hash lookups have
+/// returned lowercase `/factory/...` paths.
+pub fn is_protected_drive_path(path: &str) -> bool {
+    path.trim_start_matches('/')
+        .split('/')
+        .next()
+        .is_some_and(|first| first.eq_ignore_ascii_case("factory"))
+}
+
+/// Checks the status byte of a write-op reply (1 = success).
+fn expect_ok(reply: &[u8], what: &str) -> Result<(), String> {
+    if reply.get(5) == Some(&1) {
+        Ok(())
+    } else {
+        Err(format!("device refused to {what}"))
+    }
+}
+
+/// Splits a downloaded sample file into header fields + LE PCM. The header's
+/// own byte-size field must account for the received PCM exactly — a wrong
+/// payload offset or a short block would otherwise become a silently corrupt
+/// backup WAV, discovered only when it is needed.
+/// Public for offline tests against synthetic payloads.
+pub fn parse_sample_file(raw: &[u8]) -> Result<SampleDownload, String> {
+    if raw.len() < SAMPLE_FILE_HEADER_LEN {
+        return Err(format!(
+            "sample file is {} bytes — shorter than its {SAMPLE_FILE_HEADER_LEN}-byte header",
+            raw.len()
+        ));
+    }
+    let stereo = raw[1] != 0;
+    let declared = be_u32(raw, 4) as usize;
+    let rate = be_u32(raw, 8);
+    let wire_pcm = &raw[SAMPLE_FILE_HEADER_LEN..];
+    if declared != wire_pcm.len() {
+        return Err(format!(
+            "sample header declares {declared} PCM bytes but {} were received — \
+             refusing to store a corrupt backup",
+            wire_pcm.len()
+        ));
+    }
+    let mut pcm_le = Vec::with_capacity(wire_pcm.len());
+    for pair in wire_pcm.chunks_exact(2) {
+        pcm_le.push(pair[1]);
+        pcm_le.push(pair[0]);
+    }
+    Ok(SampleDownload {
+        pcm_le,
+        stereo,
+        rate,
+    })
 }
 
 /// Wraps a decoded message into a complete sysex frame.
@@ -588,6 +794,13 @@ fn read_cstr(data: &[u8], pos: &mut usize) -> String {
     let s = data[start..*pos].iter().map(|&b| b as char).collect();
     *pos = (*pos + 1).min(data.len());
     s
+}
+
+/// [`be_u32`] with a bounds check, for replies whose length is not
+/// guaranteed past the status byte.
+fn be_u32_checked(data: &[u8], pos: usize) -> Option<u32> {
+    let bytes: [u8; 4] = data.get(pos..pos + 4)?.try_into().ok()?;
+    Some(u32::from_be_bytes(bytes))
 }
 
 fn be_u32(data: &[u8], pos: usize) -> u32 {

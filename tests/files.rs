@@ -2,8 +2,8 @@
 //! built per the reverse-engineered wire format).
 
 use kitsmith::device::files::{
-    frame, pack7, parse_data_dir, parse_hash_path, parse_ram_slots, parse_sample_dir, unframe,
-    unpack7,
+    frame, is_protected_drive_path, pack7, parse_data_dir, parse_hash_path, parse_ram_slots,
+    parse_sample_dir, parse_sample_file, path_op_body, unframe, unpack7,
 };
 
 #[test]
@@ -127,6 +127,60 @@ fn parses_hash_path_reply() {
     missing.extend_from_slice(&[0; 8]);
     missing.extend_from_slice(b"/x\0");
     assert!(parse_hash_path(&missing).is_none());
+}
+
+#[test]
+fn write_op_bodies_frame_opcode_and_nul_terminated_paths() {
+    // mkdir (0x11), rmdir (0x12), delete file (0x20): opcode + path NUL.
+    assert_eq!(path_op_body(0x11, &["/loops"]), b"\x11/loops\0");
+    assert_eq!(path_op_body(0x12, &["/loops"]), b"\x12/loops\0");
+    assert_eq!(path_op_body(0x20, &["/loops/K1"]), b"\x20/loops/K1\0");
+    // rename (0x21): opcode + src NUL + dst NUL — dst is a full path, so a
+    // different directory moves the file.
+    assert_eq!(
+        path_op_body(0x21, &["/loops/K1", "/oneshots/K1"]),
+        b"\x21/loops/K1\0/oneshots/K1\0"
+    );
+}
+
+#[test]
+fn factory_tree_is_recognized_as_protected() {
+    assert!(is_protected_drive_path("/factory"));
+    assert!(is_protected_drive_path("/FACTORY/kicks"));
+    assert!(is_protected_drive_path("factory/x"));
+    assert!(!is_protected_drive_path("/"));
+    assert!(!is_protected_drive_path("/incoming"));
+    assert!(!is_protected_drive_path("/my-factory-picks"));
+}
+
+#[test]
+fn sample_file_parse_splits_header_and_swaps_pcm_to_le() {
+    // 64-byte header: mono, declared size 4 bytes, rate 48000, then two BE
+    // samples.
+    let mut raw = vec![0u8; 64];
+    raw[1] = 0; // mono
+    raw[4..8].copy_from_slice(&4u32.to_be_bytes());
+    raw[8..12].copy_from_slice(&48000u32.to_be_bytes());
+    raw.extend_from_slice(&0x1234u16.to_be_bytes());
+    raw.extend_from_slice(&0xFFFEu16.to_be_bytes());
+    let parsed = parse_sample_file(&raw).expect("parse");
+    assert!(!parsed.stereo);
+    assert_eq!(parsed.rate, 48000);
+    assert_eq!(parsed.pcm_le, vec![0x34, 0x12, 0xFE, 0xFF]);
+    // Shorter than the header is not a sample file.
+    assert!(parse_sample_file(&[0u8; 10]).is_err());
+}
+
+#[test]
+fn sample_file_parse_refuses_a_size_mismatch() {
+    // The header claims 6 PCM bytes but only 4 arrived (wrong offset or a
+    // short block) — this must never become a "valid" backup WAV.
+    let mut raw = vec![0u8; 64];
+    raw[4..8].copy_from_slice(&6u32.to_be_bytes());
+    raw[8..12].copy_from_slice(&48000u32.to_be_bytes());
+    raw.extend_from_slice(&[0, 1, 2, 3]);
+    let err = parse_sample_file(&raw).expect_err("must refuse");
+    assert!(err.contains("refusing to store a corrupt backup"), "{err}");
 }
 
 #[test]

@@ -270,6 +270,36 @@ fn paste_execution_verifies_via_read_back() {
         ) -> Result<Vec<kitsmith::model::edit::FieldValue>, OpError> {
             unreachable!()
         }
+        fn list_sample_dir(
+            &mut self,
+            _: &str,
+        ) -> Result<Vec<kitsmith::device::files::DriveEntry>, OpError> {
+            unreachable!("paste plans never touch the +Drive")
+        }
+        fn rename_sample_path(&mut self, _: &str, _: &str) -> Result<(), OpError> {
+            unreachable!()
+        }
+        fn create_sample_dir(&mut self, _: &str) -> Result<(), OpError> {
+            unreachable!()
+        }
+        fn delete_sample_dir(&mut self, _: &str) -> Result<(), OpError> {
+            unreachable!()
+        }
+        fn delete_sample_file(&mut self, _: &str) -> Result<(), OpError> {
+            unreachable!()
+        }
+        fn ram_sample_slots(&mut self) -> Result<Vec<kitsmith::device::files::RamSlot>, OpError> {
+            unreachable!()
+        }
+        fn download_sample_to(
+            &mut self,
+            _: &str,
+            _: &std::path::Path,
+            _: u32,
+            _: u32,
+        ) -> Result<PathBuf, OpError> {
+            unreachable!()
+        }
     }
 
     let clip = test_clipboard();

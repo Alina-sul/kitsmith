@@ -4,6 +4,7 @@
 //! [`midi`] (transport-level sysex + port enumeration), [`device`] (recognizing
 //! and watching the Rytm), and the private `gui` (egui dashboard shell).
 
+pub mod analysis;
 pub mod audio;
 pub mod cache;
 pub mod config;
