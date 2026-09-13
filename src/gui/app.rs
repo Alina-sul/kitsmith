@@ -7,6 +7,7 @@ use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Stroke};
 
 use std::collections::HashMap;
 
+use crate::audio::monitor::{MonitorHandle, MonitorStatus};
 use crate::cache::{self, ProjectManifest};
 use crate::device::detect::DeviceState;
 use crate::device::objects::MissedObject;
@@ -163,6 +164,7 @@ pub struct SyncInfo {
 
 pub struct KitsmithApp {
     pub(crate) watcher: DeviceWatcher,
+    pub(crate) monitor: MonitorHandle,
     pub(crate) sync: SyncController,
     pub(crate) import: ImportPanel,
     pub(crate) execute: ExecutePanel,
@@ -191,14 +193,18 @@ pub struct KitsmithApp {
     toasts: Vec<(String, Instant)>,
     /// The device port the last frame saw, to notice reconnects.
     seen_in_port: Option<String>,
+    /// The monitor state the last frame saw, to announce transitions.
+    seen_monitor: MonitorStatus,
 }
 
 impl KitsmithApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
+        let monitor_ctx = cc.egui_ctx.clone();
         let mut app = Self {
             watcher: DeviceWatcher::spawn(move || ctx.request_repaint()),
+            monitor: MonitorHandle::spawn(move || monitor_ctx.request_repaint()),
             sync: SyncController::default(),
             import: ImportPanel::default(),
             execute: ExecutePanel::default(),
@@ -220,6 +226,7 @@ impl KitsmithApp {
             activity: Vec::new(),
             toasts: Vec::new(),
             seen_in_port: None,
+            seen_monitor: MonitorStatus::Idle,
         };
         app.identify_active_project();
         app
@@ -442,6 +449,37 @@ impl KitsmithApp {
             self.seen_in_port = in_port;
             self.execute.invalidate_backup();
             self.discard_kit_draft("Kit edits discarded — the device connection changed");
+        }
+
+        // Monitor transitions must be loud (WP18: never fail mutely) — a
+        // running stream can die while the user is looking elsewhere.
+        let monitor_status = self.monitor.status();
+        if monitor_status != self.seen_monitor {
+            match &monitor_status {
+                MonitorStatus::Failed(err) => {
+                    let detail = err.describe();
+                    self.toast(detail.clone());
+                    self.log_activity(
+                        ActivityKind::Error,
+                        "Audio monitor failed".to_owned(),
+                        Some(detail),
+                    );
+                }
+                MonitorStatus::Running { input_name, .. } => {
+                    self.log_activity(
+                        ActivityKind::Success,
+                        format!("Monitoring started · {input_name}"),
+                        None,
+                    );
+                }
+                MonitorStatus::Idle
+                    if matches!(self.seen_monitor, MonitorStatus::Running { .. }) =>
+                {
+                    self.log_activity(ActivityKind::Info, "Monitoring stopped".to_owned(), None);
+                }
+                _ => {}
+            }
+            self.seen_monitor = monitor_status;
         }
 
         // Files dropped anywhere on the window enter the import queue.
@@ -710,6 +748,7 @@ impl KitsmithApp {
             Nav::Diagnostics => views::diagnostics::show(
                 ui,
                 &self.watcher,
+                &self.monitor,
                 self.model.as_ref(),
                 self.last_sync,
                 &self.sync_misses,

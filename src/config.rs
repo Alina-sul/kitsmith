@@ -41,6 +41,30 @@ pub const FILE_REPLY_TIMEOUT: Duration = Duration::from_millis(2000);
 /// hardware probe — see docs/hardware-verification.md.
 pub const DRIVE_NAME_MAX_LEN: usize = 32;
 
+/// Live-monitor ring capacity in stereo frames (~170 ms of headroom at 48 kHz).
+pub const MONITOR_RING_FRAMES: usize = 8192;
+
+/// Frames buffered before monitor playback starts (~21 ms at 48 kHz). Trades
+/// a little latency for underrun resistance.
+pub const MONITOR_PREFILL_FRAMES: usize = 1024;
+
+/// The monitor path is the Rytm's main outs: interleaved stereo.
+pub const MONITOR_CHANNELS: usize = 2;
+
+/// Shown wherever the app explains how to make the device visible over USB.
+/// USB AUDIO/MIDI is recommended (a superset of USB MIDI: sysex and audio
+/// monitoring both work there); menu names match the OS 1.72 manual.
+pub const DEVICE_CONNECT_HINT: &str = "Connect the Rytm over USB. On the device: GLOBAL \
+SETTINGS → SYSTEM → USB CONFIG → USB AUDIO/MIDI (or USB MIDI if you don't need audio \
+monitoring), and MIDI CONFIG → PORT CONFIG input/output → USB.";
+
+/// Shown when the Rytm's MIDI port is visible but its USB audio input is not
+/// (device is in plain USB-MIDI or Overbridge mode).
+pub const MONITOR_USB_CONFIG_HINT: &str = "The Rytm's MIDI is visible but its audio interface \
+isn't. On the device, set GLOBAL SETTINGS → SYSTEM → USB CONFIG to USB AUDIO/MIDI (plain \
+USB MIDI and Overbridge mode both hide the class-compliant audio input), then start \
+monitoring again.";
+
 /// Product name as shown in the window title and About section.
 pub const APP_NAME: &str = "Kitsmith";
 

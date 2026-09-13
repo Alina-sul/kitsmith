@@ -36,6 +36,13 @@ Device: Analog Rytm MKII, OS 1.72, USB-MIDI. Probe: `cargo run --example probe`
 | +Drive rename/move of a DIRECTORY (0x21) | **pending** | elektroid pins 0x21 for files; dir support is unknown. GUI hides dir rename/move until this row flips. Probe on scratch dirs only (`/probe-a/inner` → in-place, then cross-dir) | dirs delete-only in the GUI |
 | Sample download (0x30–0x32) | **pending** | open reply carries id + total bytes; 64-byte header + BE PCM at payload offset 22; status 2 = factory refusal. Offline parse tested (tests/files.rs). Gate: byte totals + WAV plays | delete stays blocked (its backup needs this) |
 | +Drive name length/charset limit | **pending** | Kitsmith caps at 32 printable ASCII (`config::DRIVE_NAME_MAX_LEN`); the device's true limit and charset are unprobed | conservative cap |
+| USB audio: Rytm as CoreAudio input (USB AUDIO/MIDI mode) | **pending** | monitor built (`audio::monitor`); record the exact CoreAudio device name for the matcher corpus | monitor button reports NoRytmAudioInput |
+| USB audio format is 48 kHz / 2-ch as assumed | **pending** | `pick_config` pins 48 kHz; mono/wide inputs are folded to stereo defensively | UnsupportedFormat error shown |
+| Overbridge mode hides class-compliant audio, keeps MIDI | **pending** | validates the diagnostics hint heuristic (MIDI visible + audio absent → USB CONFIG help) | hint may show in a wrong mode; copy stays generic |
+| Object sync + file transfer glitch-free while monitoring | **pending** | audio rides a separate USB interface from the serial sysex conversation (PRD §46) | stop monitoring during sync |
+| Unplug mid-monitor lands in Failed(Disconnected), no hang | **pending** | cpal error callback → monitor thread drops both streams | — |
+| Monitor latency acceptable at 1024-frame prefill | **pending** | ~21 ms prefill + device buffers; `config::MONITOR_PREFILL_FRAMES` is the knob | raise/lower prefill |
+| macOS mic permission (TCC) covers USB audio input | **pending** | under `cargo run` the terminal gets the mic prompt; a future bundled app needs `NSMicrophoneUsageDescription` — a denied prompt looks like silent input, not an error | document in README |
 
 ## Raw project format (verified live, 2026-09-05)
 

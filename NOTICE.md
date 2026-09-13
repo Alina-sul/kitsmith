@@ -14,6 +14,7 @@ between their computer and their own device.
 | [rytm-rs](https://github.com/alisomay/rytm-rs) / rytm-sys | alisomay | MIT | Analog Rytm object sysex SDK |
 | [libanalogrytm](https://github.com/bsp2/libanalogrytm) | bsp2 | MIT | Object format ground truth (via rytm-sys) |
 | [midir](https://github.com/Boddlnagg/midir) | Boddlnagg | MIT | Cross-platform MIDI I/O |
+| [cpal](https://github.com/RustAudio/cpal) | RustAudio | Apache-2.0 | Live audio monitoring (USB audio I/O) |
 | [egui / eframe](https://github.com/emilk/egui) | emilk | MIT/Apache-2.0 | GUI framework |
 | [hound](https://github.com/ruuda/hound) | ruuda | Apache-2.0 | WAV read/write |
 | [serde](https://serde.rs) | serde-rs | MIT/Apache-2.0 | Serialization |

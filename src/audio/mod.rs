@@ -1,10 +1,11 @@
-//! Audio import: converting arbitrary WAV files to the Rytm's native format.
+//! Audio: sample import and live monitoring.
 //!
-//! Mirrors what Elektron Transfer does on drop: decode → downmix to mono →
-//! resample to 48 kHz → 16-bit. `convert` is the pipeline; `resample` the
-//! hand-rolled windowed-sinc resampler it uses.
+//! `convert` + `resample` mirror what Elektron Transfer does on drop: decode →
+//! downmix to mono → resample to 48 kHz → 16-bit. `monitor` passes the Rytm's
+//! class-compliant USB audio through to the computer's output.
 
 mod convert;
+pub mod monitor;
 mod resample;
 
 pub use convert::{convert_wav_file, ConvertError, ConvertedSample};

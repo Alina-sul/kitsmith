@@ -2443,7 +2443,10 @@ For every new mutating Plan:
 
 - DAW-like sequencer editing.
 - Full synth parameter editor for every Track Sound.
-- Audio-over-USB / Overbridge replacement.
+- Overbridge protocol / multitrack audio / mixing. (Amended 2026-09-13: a plain
+  class-compliant *stereo* monitor — hear the device's main outs through the
+  computer — is IN scope as part of WP18; it is read-only and involves no
+  Overbridge protocol work.)
 - Live multitrack audio mixer.
 - Automatic destructive cleanup based on incomplete dependency data.
 - Remote project switching until the load/swap operation is understood and verified.
@@ -2648,6 +2651,15 @@ performance macros via CC 35–47 (sliders emulate pad pressure), track
 mute/solo/level via CC 93–95. Local WAV preview of samples works with the device
 unplugged. Live CC edits are working-state only and the UI never presents them
 as saved. Spec source: `docs/research/midi-control-map.md`.
+
+Also in this package (added 2026-09-13): **live audio monitoring** — the Rytm's
+class-compliant USB audio input (USB CONFIG → USB AUDIO/MIDI, OS 1.50+) passed
+through to the computer's default output (`audio::monitor`), so pressing Play
+on the device — or a pad from the app — is heard on the computer. Stereo main
+outs only; read-only; no Overbridge protocol. Toggle in the top bar, status and
+glitch counters under Device & Diagnostics; when the Rytm's MIDI is visible but
+its audio isn't, the UI explains the USB CONFIG setting instead of failing
+mutely.
 
 ## WP19 — Kit creation and editing (the headline write)
 

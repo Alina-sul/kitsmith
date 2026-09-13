@@ -32,6 +32,7 @@ Status: ✅ built+hardware-verified · 🔶 built, needs hardware verification �
 | Unload slot / purge unused | FP | 🧭 | elektroid can clear RAM slots remotely |
 | **Reorder project slots** | FP + OS | 🔬 | slot numbers are referenced by Sounds/trigs — reorder = rewrite every referrer; only via full transaction |
 | Local audio preview (computer) | — | 🧭 | decode WAV locally; no device needed |
+| Monitor device audio (USB) | audio | 🔶 | class-compliant stereo in → computer output (`audio::monitor`); requires USB AUDIO/MIDI mode on the device; HW verify pending |
 | Audition slot on device | MIDI | 🧭 | CC 27 (sample slot) on a scratch track + note trig |
 
 ## Projects

@@ -3,6 +3,7 @@
 
 use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, Sense, Stroke};
 
+use crate::audio::monitor::MonitorStatus;
 use crate::device::detect::DeviceState;
 use crate::gui::app::{ago, KitsmithApp, Nav, ProjectTab};
 use crate::gui::sync::SyncStatus;
@@ -48,6 +49,7 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui, ctx: &egui::Context) {
             if ui.button("Import").clicked() {
                 app.ui_state.nav = Nav::Import;
             }
+            monitor_toggle(app, ui);
             sync_control(app, ui, ctx);
         });
     });
@@ -62,9 +64,7 @@ fn device_pill(app: &mut KitsmithApp, ui: &mut egui::Ui) {
         DeviceState::Searching => (
             theme::TEXT_MUTED,
             "No device",
-            "Connect the Rytm over USB. On the device: GLOBAL SETTINGS → SYSTEM → USB CONFIG → \
-             USB-MIDI, and MIDI CONFIG → PORT CONFIG input/output → USB."
-                .to_owned(),
+            crate::config::DEVICE_CONNECT_HINT.to_owned(),
         ),
     };
     let response = Frame::new()
@@ -83,6 +83,61 @@ fn device_pill(app: &mut KitsmithApp, ui: &mut egui::Ui) {
         .on_hover_text(hover);
     if response.clicked() {
         app.ui_state.nav = Nav::Diagnostics;
+    }
+}
+
+/// Live-monitor toggle: hear the Rytm's USB audio through the computer.
+/// Failure detail lives in Device & Diagnostics; here it's a colored cue.
+fn monitor_toggle(app: &mut KitsmithApp, ui: &mut egui::Ui) {
+    match app.monitor.status() {
+        MonitorStatus::Idle => {
+            if ui
+                .button("🔈")
+                .on_hover_text(
+                    "Start live monitoring — hear the Rytm through this computer (requires \
+                     GLOBAL SETTINGS → SYSTEM → USB CONFIG → USB AUDIO/MIDI on the device)",
+                )
+                .clicked()
+            {
+                app.monitor.start();
+            }
+        }
+        MonitorStatus::Starting => {
+            // Cancel queues behind the opening streams and lands right after.
+            if ui
+                .button("🔈")
+                .on_hover_text("Starting audio monitor… click to cancel")
+                .clicked()
+            {
+                app.monitor.stop();
+            }
+        }
+        MonitorStatus::Running { input_name, .. } => {
+            if ui
+                .button(RichText::new("🔊").color(theme::SUCCESS))
+                .on_hover_text(format!("Monitoring {input_name} — click to stop"))
+                .clicked()
+            {
+                app.monitor.stop();
+            }
+        }
+        MonitorStatus::Failed(err) => {
+            if ui
+                .button(RichText::new("🔇").color(theme::DANGER))
+                .on_hover_text(format!("{} — click to retry", err.describe()))
+                .clicked()
+            {
+                app.monitor.start();
+            }
+            let response = ui
+                .label(RichText::new("Monitor failed").color(theme::DANGER))
+                .interact(Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(format!("{} Click for details.", err.describe()));
+            if response.clicked() {
+                app.ui_state.nav = Nav::Diagnostics;
+            }
+        }
     }
 }
 

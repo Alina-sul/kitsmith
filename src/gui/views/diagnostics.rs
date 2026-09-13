@@ -3,6 +3,7 @@
 
 use eframe::egui::{self, RichText, ScrollArea};
 
+use crate::audio::monitor::{MonitorError, MonitorHandle, MonitorStatus};
 use crate::device::detect::DeviceState;
 use crate::device::objects::MissedObject;
 use crate::device::watcher::DeviceWatcher;
@@ -13,6 +14,7 @@ use crate::model::ProjectModel;
 pub fn show(
     ui: &mut egui::Ui,
     watcher: &DeviceWatcher,
+    monitor: &MonitorHandle,
     model: Option<&ProjectModel>,
     last_sync: Option<SyncInfo>,
     sync_misses: &[MissedObject],
@@ -39,12 +41,9 @@ pub fn show(
                     widgets::status_dot(ui, theme::TEXT_MUTED, "No device");
                 });
                 ui.label(
-                    RichText::new(
-                        "Connect the Rytm over USB. On the device: GLOBAL SETTINGS → SYSTEM → \
-                         USB CONFIG → USB-MIDI, and MIDI CONFIG → PORT CONFIG input/output → USB.",
-                    )
-                    .color(theme::TEXT_SECONDARY)
-                    .size(theme::FONT_META),
+                    RichText::new(crate::config::DEVICE_CONNECT_HINT)
+                        .color(theme::TEXT_SECONDARY)
+                        .size(theme::FONT_META),
                 );
             }
         });
@@ -111,15 +110,20 @@ pub fn show(
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(
-                        "Timeouts: stop the sequencer, set USB CONFIG → USB-MIDI and PORT \
-                         CONFIG → USB only, then re-sync. Parse failures on the same objects \
-                         every time are a protocol finding — worth reporting.",
+                        "Timeouts: stop the sequencer and set PORT CONFIG → USB only, then \
+                         re-sync. If they persist, USB CONFIG → USB MIDI is the leanest mode \
+                         (note: it disables audio monitoring). Parse failures on the same \
+                         objects every time are a protocol finding — worth reporting.",
                     )
                     .color(theme::TEXT_MUTED)
                     .size(theme::FONT_META),
                 );
             });
         }
+
+        widgets::inspector_group(ui, "AUDIO MONITOR", |ui| {
+            audio_monitor_section(ui, monitor, &snapshot.device);
+        });
 
         widgets::inspector_group(ui, "MIDI INPUTS", |ui| {
             port_list(ui, &snapshot.ports.inputs);
@@ -142,6 +146,77 @@ pub fn show(
             );
         });
     });
+}
+
+/// Live-monitor state, glitch counters and the start/stop control. The
+/// USB CONFIG hint fires only when MIDI sees the device but audio doesn't —
+/// that combination means the device is in the wrong USB mode.
+fn audio_monitor_section(ui: &mut egui::Ui, monitor: &MonitorHandle, device: &DeviceState) {
+    match monitor.status() {
+        MonitorStatus::Idle => {
+            ui.label(
+                RichText::new("Hear the Rytm through this computer while you play.")
+                    .color(theme::TEXT_SECONDARY)
+                    .size(theme::FONT_META),
+            );
+            if ui.button("Start monitoring").clicked() {
+                monitor.start();
+            }
+        }
+        MonitorStatus::Starting => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Opening audio streams…");
+            });
+            if ui.button("Cancel").clicked() {
+                monitor.stop();
+            }
+        }
+        MonitorStatus::Running {
+            input_name,
+            output_name,
+        } => {
+            ui.horizontal(|ui| {
+                widgets::status_dot(ui, theme::SUCCESS, "Monitoring");
+            });
+            widgets::detail_line(ui, "Input", &input_name);
+            widgets::detail_line(ui, "Output", &output_name);
+            let (underruns, overruns) = monitor.glitches();
+            widgets::detail_line(
+                ui,
+                "Glitches",
+                &format!("{underruns} underruns · {overruns} overruns"),
+            );
+            if ui.button("Stop monitoring").clicked() {
+                monitor.stop();
+            }
+        }
+        MonitorStatus::Failed(err) => {
+            ui.horizontal(|ui| {
+                widgets::status_dot(ui, theme::WARNING, "Not running");
+            });
+            widgets::detail_line(ui, "Reason", &err.describe());
+            let hint = match (&err, device) {
+                (MonitorError::NoRytmAudioInput, DeviceState::Connected(_)) => {
+                    Some(crate::config::MONITOR_USB_CONFIG_HINT)
+                }
+                (MonitorError::NoRytmAudioInput, DeviceState::Searching) => {
+                    Some("Device not found — connect the Rytm over USB first.")
+                }
+                _ => None,
+            };
+            if let Some(hint) = hint {
+                ui.label(
+                    RichText::new(hint)
+                        .color(theme::TEXT_SECONDARY)
+                        .size(theme::FONT_META),
+                );
+            }
+            if ui.button("Try again").clicked() {
+                monitor.start();
+            }
+        }
+    }
 }
 
 fn port_list(ui: &mut egui::Ui, names: &[String]) {
