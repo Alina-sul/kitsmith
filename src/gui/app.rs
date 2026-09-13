@@ -90,6 +90,14 @@ pub struct KitsState {
     pub pending_save: Option<crate::model::edit::KitEditDraft>,
 }
 
+/// What the quick-rename modal is renaming (pure UI intent, active project
+/// only — snapshots are read-only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KitRenameTarget {
+    Kit(usize),
+    Sound { kit: usize, track: usize },
+}
+
 /// All per-frame-persistent UI state, separate from device/model state.
 #[derive(Default)]
 pub struct UiState {
@@ -123,6 +131,9 @@ pub struct UiState {
     pub clear_confirm_draft: String,
     /// Restore-from-backup modal: the (empty) slot to re-upload into.
     pub restore_modal_slot: Option<u32>,
+    /// Quick-rename modal for a kit or a track Sound + the draft name.
+    pub kit_rename: Option<KitRenameTarget>,
+    pub kit_rename_draft: String,
     /// Attestation checkbox shared by the slot-op modals ("the project in
     /// this slot is not currently loaded on the device") — the active slot
     /// is unreadable, so the user's word is the only possible guard.
@@ -779,6 +790,7 @@ impl eframe::App for KitsmithApp {
 
         project_modals::show(self, &ctx);
         crate::gui::drive_modals::show(self, &ctx);
+        crate::gui::kit_modals::show(self, &ctx);
 
         // Plan preview / execution modal, if a drag landed.
         let in_port = self.connected_in_port();

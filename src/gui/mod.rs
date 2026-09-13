@@ -9,6 +9,7 @@ mod execute;
 mod fileops;
 mod import;
 mod kit_editor;
+mod kit_modals;
 mod project_modals;
 mod sidebar;
 mod sync;
