@@ -98,8 +98,14 @@ pub enum OpStep {
         expect: DriveEntryExpect,
     },
     /// Rename one Sound Pool slot's Sound (fresh read + drift guard, same
-    /// policy as kit edits).
-    RenamePoolSound { pool_index: u8, name: String },
+    /// policy as kit edits). `expected_current` is the name the user
+    /// confirmed — a slot that holds a differently named Sound by execute
+    /// time is refused, never renamed blind.
+    RenamePoolSound {
+        pool_index: u8,
+        name: String,
+        expected_current: String,
+    },
     /// Read the pool Sound back and check its name (NUL padding ignored).
     VerifyPoolSoundName { pool_index: u8, expected: String },
 }
@@ -155,7 +161,9 @@ impl OpStep {
                     format!("re-list {dir} and verify {name} is there with unchanged content")
                 }
             },
-            Self::RenamePoolSound { pool_index, name } => format!(
+            Self::RenamePoolSound {
+                pool_index, name, ..
+            } => format!(
                 "pool sound {:03}: set the name to “{name}” and write it back",
                 pool_index + 1
             ),
@@ -440,10 +448,13 @@ impl Plan {
     }
 
     /// A plan that renames one Sound Pool slot's Sound, prepending the
-    /// session backup when one has not been taken yet.
+    /// session backup when one has not been taken yet. `expected_current`
+    /// is the name shown when the user confirmed — the executor refuses if
+    /// the slot holds a different Sound by then.
     pub fn rename_pool_sound(
         pool_index: u8,
         name: &str,
+        expected_current: &str,
         backup_taken: bool,
     ) -> Result<Self, OpError> {
         if pool_index >= 128 {
@@ -456,6 +467,7 @@ impl Plan {
         steps.push(OpStep::RenamePoolSound {
             pool_index,
             name: name.to_owned(),
+            expected_current: expected_current.to_owned(),
         });
         steps.push(OpStep::VerifyPoolSoundName {
             pool_index,
@@ -586,9 +598,11 @@ pub fn execute(
             OpStep::VerifyDriveEntry { dir, name, expect } => {
                 verify_drive_entry(backend, dir, name, expect)
             }
-            OpStep::RenamePoolSound { pool_index, name } => {
-                backend.rename_pool_sound(*pool_index, name)
-            }
+            OpStep::RenamePoolSound {
+                pool_index,
+                name,
+                expected_current,
+            } => backend.rename_pool_sound(*pool_index, name, expected_current),
             OpStep::VerifyPoolSoundName {
                 pool_index,
                 expected,
@@ -650,8 +664,14 @@ fn verify_pool_sound_name(
     if read.trim_end_matches('\0') == expected.trim_end_matches('\0') {
         Ok(())
     } else {
+        // Non-arrival is only half the story: the device's receive settings
+        // may have routed the written sound into a DIFFERENT slot — the
+        // target reading wrong does not prove nothing changed elsewhere.
         Err(OpError::VerificationFailed(format!(
-            "pool sound {:03}: wrote \"{expected}\", device reports \"{}\"",
+            "pool sound {:03}: wrote \"{expected}\", device reports \"{}\". \
+             The written sound may have been applied to a different pool or \
+             +Drive slot — re-sync the pool and check the device's SYSEX \
+             RECEIVE destination before retrying",
             pool_index + 1,
             read.trim_end_matches('\0')
         )))

@@ -225,8 +225,23 @@ impl DeviceBackend for MockBackend {
         Ok(self.ram.clone())
     }
 
-    fn rename_pool_sound(&mut self, pool_index: u8, name: &str) -> Result<(), OpError> {
+    fn rename_pool_sound(
+        &mut self,
+        pool_index: u8,
+        name: &str,
+        expected_current: &str,
+    ) -> Result<(), OpError> {
         self.calls.push(format!("rename-pool {pool_index}"));
+        let current = self
+            .pool_names
+            .get(&pool_index)
+            .cloned()
+            .unwrap_or_default();
+        if current != expected_current {
+            return Err(OpError::InvalidRequest(format!(
+                "pool sound is now named \"{current}\", not \"{expected_current}\""
+            )));
+        }
         self.pool_names.insert(pool_index, name.to_owned());
         Ok(())
     }
@@ -438,7 +453,7 @@ fn quick_rename_drafts_compile_and_verify_like_any_edit() {
 
 #[test]
 fn pool_rename_plan_backs_up_writes_and_verifies() {
-    let plan = Plan::rename_pool_sound(7, "SUB BASS", false).expect("plan");
+    let plan = Plan::rename_pool_sound(7, "SUB BASS", "", false).expect("plan");
     assert_eq!(plan.steps.len(), 3);
     assert_eq!(plan.steps[0], OpStep::BackupProject);
     let mut backend = MockBackend::default();
@@ -454,13 +469,25 @@ fn pool_rename_plan_backs_up_writes_and_verifies() {
         lie_on_pool_read: Some("SUB BASS\0\0\0\0\0\0\0".into()),
         ..MockBackend::default()
     };
-    let plan = Plan::rename_pool_sound(7, "SUB BASS", true).expect("plan");
+    let plan = Plan::rename_pool_sound(7, "SUB BASS", "", true).expect("plan");
     assert!(execute(&plan, &mut padded, |_, _| {}).succeeded());
 }
 
 #[test]
-fn pool_rename_verification_mismatch_fails() {
-    let plan = Plan::rename_pool_sound(3, "CLAP", true).expect("plan");
+fn pool_rename_refuses_a_slot_that_changed_since_the_sync() {
+    // The user confirmed renaming "OLD KICK"; the pool was reorganized and
+    // slot 5 now holds a different sound — the write must be refused.
+    let mut backend = MockBackend::default();
+    backend.pool_names.insert(5, "SOMETHING ELSE".into());
+    let plan = Plan::rename_pool_sound(5, "NEW KICK", "OLD KICK", true).expect("plan");
+    let report = execute(&plan, &mut backend, |_, _| {});
+    assert!(!report.succeeded());
+    assert_eq!(backend.pool_names[&5], "SOMETHING ELSE", "nothing written");
+}
+
+#[test]
+fn pool_rename_verification_mismatch_names_the_misrouting_hazard() {
+    let plan = Plan::rename_pool_sound(3, "CLAP", "", true).expect("plan");
     let mut backend = MockBackend {
         lie_on_pool_read: Some("OTHER".into()),
         ..MockBackend::default()
@@ -469,14 +496,17 @@ fn pool_rename_verification_mismatch_fails() {
     assert!(!report.succeeded());
     let (_, err) = report.failed.unwrap();
     assert!(err.contains("verification failed"), "got: {err}");
+    // A failed target verify does not prove nothing changed — the write may
+    // have been routed into a different slot; the message must say so.
+    assert!(err.contains("different pool or +Drive slot"), "got: {err}");
 }
 
 #[test]
 fn pool_rename_plan_rejects_bad_input() {
-    assert!(Plan::rename_pool_sound(128, "X", true).is_err());
-    assert!(Plan::rename_pool_sound(0, "0123456789ABCDEF", true).is_err());
-    assert!(Plan::rename_pool_sound(0, "ümlaut", true).is_err());
-    assert!(Plan::rename_pool_sound(127, "OK NAME", true).is_ok());
+    assert!(Plan::rename_pool_sound(128, "X", "", true).is_err());
+    assert!(Plan::rename_pool_sound(0, "0123456789ABCDEF", "", true).is_err());
+    assert!(Plan::rename_pool_sound(0, "ümlaut", "", true).is_err());
+    assert!(Plan::rename_pool_sound(127, "OK NAME", "", true).is_ok());
 }
 
 #[test]

@@ -47,13 +47,25 @@ impl LiveBackend {
     }
 
     /// Queries one Sound Pool slot into the internal project; returns the
-    /// raw reply.
+    /// raw reply. Distinguishes silence from an unparseable answer — on
+    /// hardware they call for entirely different debugging.
     fn query_pool_sound(&mut self, pool_index: u8) -> Result<Vec<u8>, OpError> {
+        use crate::device::objects::{try_accept_reply, ReplyFailure};
         let query = SoundQuery::new(usize::from(pool_index))
             .and_then(|q| q.as_sysex())
             .map_err(|e| OpError::Device(e.to_string()))?;
-        self.exchange(&query)
-            .ok_or_else(|| OpError::Device(format!("pool sound {pool_index} query got no reply")))
+        self.link
+            .send(&query)
+            .map_err(|e| OpError::Device(e.to_string()))?;
+        try_accept_reply(&self.link, &mut self.rytm, &query).map_err(|failure| match failure {
+            ReplyFailure::Timeout => {
+                OpError::Device(format!("pool sound {pool_index} query got no reply"))
+            }
+            ReplyFailure::Unparseable => OpError::Device(format!(
+                "pool sound {pool_index} answered, but the reply could not be \
+                 parsed (firmware format drift?) — nothing was written"
+            )),
+        })
     }
 }
 
@@ -303,7 +315,12 @@ impl DeviceBackend for LiveBackend {
         Ok(dest.to_path_buf())
     }
 
-    fn rename_pool_sound(&mut self, pool_index: u8, name: &str) -> Result<(), OpError> {
+    fn rename_pool_sound(
+        &mut self,
+        pool_index: u8,
+        name: &str,
+        expected_current: &str,
+    ) -> Result<(), OpError> {
         // Always mutate a fresh copy — the untouched bytes must be whatever
         // is on the device right now.
         let reply = self.query_pool_sound(pool_index)?;
@@ -321,6 +338,18 @@ impl DeviceBackend for LiveBackend {
             return Err(OpError::Device(format!(
                 "pool sound {:03} re-encodes differently than the device sent \
                  it (firmware drift?) — write refused to protect unmodeled bytes",
+                pool_index + 1
+            )));
+        }
+        // The user confirmed a rename of a specific Sound; if the pool was
+        // reorganized on the device since the last sync, this slot may hold
+        // a different one now — refuse rather than rename a stranger.
+        let device_name = sound.name().trim_end_matches('\0').to_owned();
+        if device_name != expected_current.trim_end_matches('\0') {
+            return Err(OpError::InvalidRequest(format!(
+                "pool sound {:03} is now named \"{device_name}\", not \
+                 \"{expected_current}\" — the pool changed since the last \
+                 sync; re-sync and retry",
                 pool_index + 1
             )));
         }

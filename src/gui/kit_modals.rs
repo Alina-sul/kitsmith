@@ -124,7 +124,7 @@ pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
                     )
                 }
                 KitRenameTarget::PoolSound(slot) => (
-                    Plan::rename_pool_sound(slot, &new_name, app.execute.backup_taken()),
+                    Plan::rename_pool_sound(slot, &new_name, &current, app.execute.backup_taken()),
                     None,
                 ),
             });

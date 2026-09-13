@@ -891,7 +891,8 @@ impl eframe::App for KitsmithApp {
                 } else {
                     self.toast(format!(
                         "Rename of pool sound {:03} failed — nothing was changed \
-                         locally. Re-sync to see the device's actual state.",
+                         locally. Re-sync the pool before retrying (see the \
+                         Stopped dialog for what the device reported).",
                         slot + 1
                     ));
                 }

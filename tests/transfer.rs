@@ -300,7 +300,7 @@ fn paste_execution_verifies_via_read_back() {
         ) -> Result<PathBuf, OpError> {
             unreachable!()
         }
-        fn rename_pool_sound(&mut self, _: u8, _: &str) -> Result<(), OpError> {
+        fn rename_pool_sound(&mut self, _: u8, _: &str, _: &str) -> Result<(), OpError> {
             unreachable!()
         }
         fn read_pool_sound_name(&mut self, _: u8) -> Result<String, OpError> {

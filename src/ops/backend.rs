@@ -94,8 +94,15 @@ pub trait DeviceBackend {
     fn ram_sample_slots(&mut self) -> Result<Vec<RamSlot>, OpError>;
 
     /// Fresh-reads one Sound Pool slot, renames its Sound and writes it back
-    /// (drift-guarded like kit edits).
-    fn rename_pool_sound(&mut self, pool_index: u8, name: &str) -> Result<(), OpError>;
+    /// (drift-guarded like kit edits). `expected_current` is the name the
+    /// user confirmed — if the slot holds a differently named Sound by now
+    /// (pool reorganized since the last sync), the write is refused.
+    fn rename_pool_sound(
+        &mut self,
+        pool_index: u8,
+        name: &str,
+        expected_current: &str,
+    ) -> Result<(), OpError>;
 
     /// Fresh-reads one Sound Pool slot's Sound name.
     fn read_pool_sound_name(&mut self, pool_index: u8) -> Result<String, OpError>;
