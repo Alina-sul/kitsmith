@@ -60,7 +60,7 @@ fn unindexed_project(app: &mut KitsmithApp, ui: &mut egui::Ui, id: u32) {
     }
     ui.add_space(theme::GAP_S);
     ui.horizontal(|ui| {
-        let busy = app.fileops.is_running();
+        let busy = app.device_busy();
         if ui
             .add_enabled(!busy, egui::Button::new("Rename on device…"))
             .on_hover_text("Writes the native name into the project slot (verified).")
@@ -147,7 +147,7 @@ fn unindexed_project(app: &mut KitsmithApp, ui: &mut egui::Ui, id: u32) {
                 );
                 ui.add_space(4.0);
                 let connected = app.connected_in_port().is_some();
-                let busy = app.backup.is_running();
+                let busy = app.device_busy();
                 if busy {
                     ui.horizontal(|ui| {
                         ui.spinner();

@@ -42,6 +42,11 @@ pub struct ProjectBackup {
 /// Manifest: slot id → backup info.
 pub type ProjectManifest = BTreeMap<u32, ProjectBackup>;
 
+/// Serializes every manifest read-modify-write: backup indexing and file
+/// operations run on different threads, and an unlocked load→insert→write
+/// would silently drop one writer's entry.
+static MANIFEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Saves one project's payload and updates the manifest.
 pub fn save_project_backup(
     dir: &Path,
@@ -54,6 +59,7 @@ pub fn save_project_backup(
     let projects_dir = dir.join(PROJECTS_SUBDIR);
     std::fs::create_dir_all(&projects_dir)?;
     std::fs::write(projects_dir.join(format!("{slot:03}.bin")), payload)?;
+    let _guard = MANIFEST_LOCK.lock().expect("manifest lock poisoned");
     let mut manifest = load_project_manifest(dir);
     manifest.insert(
         slot,
@@ -70,6 +76,21 @@ pub fn save_project_backup(
     );
     let json = serde_json::to_vec_pretty(&manifest).map_err(io::Error::other)?;
     std::fs::write(dir.join(PROJECTS_MANIFEST_FILE), json)
+}
+
+/// Removes one slot's backup (manifest entry + payload file) — used after a
+/// verified move, where identical bytes live under the destination slot.
+pub fn remove_project_backup(dir: &Path, slot: u32) -> io::Result<()> {
+    let _guard = MANIFEST_LOCK.lock().expect("manifest lock poisoned");
+    let mut manifest = load_project_manifest(dir);
+    manifest.remove(&slot);
+    let json = serde_json::to_vec_pretty(&manifest).map_err(io::Error::other)?;
+    std::fs::write(dir.join(PROJECTS_MANIFEST_FILE), json)?;
+    let payload = dir.join(PROJECTS_SUBDIR).join(format!("{slot:03}.bin"));
+    match std::fs::remove_file(payload) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
 }
 
 /// Reads one backed-up project payload, if present.

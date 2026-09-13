@@ -520,7 +520,7 @@ fn plan_footer(
     ui.add_space(theme::GAP_S);
     ui.horizontal(|ui| {
         let connected = app.connected_in_port().is_some();
-        let busy = app.execute.is_busy();
+        let busy = app.device_busy();
         let hint = if let Some(hint) = not_ready {
             hint
         } else if !connected {

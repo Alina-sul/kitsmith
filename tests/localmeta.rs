@@ -77,3 +77,24 @@ fn newer_store_version_is_not_misread() {
     assert_eq!(load_from(&dir), LocalMeta::default());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn aliases_follow_projects_across_slot_moves_and_swaps() {
+    let mut meta = LocalMeta::default();
+    meta.set_project_alias(3, "Techno live", "PROJ A");
+    meta.set_project_alias(4, "Ambient", "PROJ B");
+
+    // Swap: each alias travels with its project (fingerprint intact).
+    meta.swap_project_aliases(3, 4);
+    assert_eq!(meta.project_alias(4, "PROJ A"), Some("Techno live"));
+    assert_eq!(meta.project_alias(3, "PROJ B"), Some("Ambient"));
+
+    // Move to an empty slot: the alias re-keys; the source slot forgets it.
+    meta.move_project_alias(4, 9);
+    assert_eq!(meta.project_alias(9, "PROJ A"), Some("Techno live"));
+    assert_eq!(meta.project_alias(4, "PROJ A"), None);
+
+    // Moving a slot with no alias clears any stale alias at the destination.
+    meta.move_project_alias(60, 3);
+    assert_eq!(meta.project_alias(3, "PROJ B"), None);
+}

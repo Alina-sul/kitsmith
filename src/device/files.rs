@@ -50,7 +50,10 @@ const OP_DATA_READ_CLOSE: u8 = 0x56;
 const OP_DATA_WRITE_OPEN: u8 = 0x57;
 const OP_DATA_WRITE_PARTIAL: u8 = 0x58;
 const OP_DATA_WRITE_CLOSE: u8 = 0x59;
+const OP_DATA_MOVE: u8 = 0x5A;
 const OP_DATA_COPY: u8 = 0x5B;
+const OP_DATA_CLEAR: u8 = 0x5C;
+const OP_DATA_SWAP: u8 = 0x5D;
 
 /// Chunk size requested per partial data read (matches Transfer/elektroid).
 const DATA_CHUNK_BYTES: u32 = 0x2000;
@@ -213,6 +216,13 @@ impl FileClient {
             body.extend_from_slice(&chunk_seq.to_be_bytes());
             let reply = self.transact(link, &body)?;
             let chunk = parse_data_chunk(&reply)?;
+            // Check the device-reported CRC before trusting the payload —
+            // downloads back slot ops as the only recovery copy, so damaged
+            // bytes must never be saved as a "backup". Empty chunks carry
+            // uninitialized fields (hardware-verified) and are skipped.
+            if !chunk.data.is_empty() && crc32(0xFFFF_FFFF, &chunk.data) != chunk.crc {
+                return None;
+            }
             bytes.extend_from_slice(&chunk.data);
             on_chunk(&chunk, bytes.len());
             chunk_seq = chunk_seq.wrapping_add(1);
@@ -298,6 +308,32 @@ impl FileClient {
             return Err("device refused the copy".into());
         }
         Ok(())
+    }
+
+    /// Moves one data item to an empty slot (e.g. `/projects/20` →
+    /// `/projects/8`). Device-side; nothing is transferred.
+    pub fn move_data(&mut self, link: &mut MidiLink, src: &str, dst: &str) -> Result<(), String> {
+        let reply = self
+            .transact(link, &path_op_body(OP_DATA_MOVE, &[src, dst]))
+            .ok_or("move got no reply")?;
+        expect_ok(&reply, "move the project")
+    }
+
+    /// Swaps two data slots (e.g. `/projects/3` ↔ `/projects/4`).
+    pub fn swap_data(&mut self, link: &mut MidiLink, a: &str, b: &str) -> Result<(), String> {
+        let reply = self
+            .transact(link, &path_op_body(OP_DATA_SWAP, &[a, b]))
+            .ok_or("swap got no reply")?;
+        expect_ok(&reply, "swap the projects")
+    }
+
+    /// Clears one data slot (e.g. `/projects/7`). Destructive — callers must
+    /// have downloaded and stored the payload first (backup-first rule).
+    pub fn clear_data(&mut self, link: &mut MidiLink, path: &str) -> Result<(), String> {
+        let reply = self
+            .transact(link, &path_op_body(OP_DATA_CLEAR, &[path]))
+            .ok_or("clear got no reply")?;
+        expect_ok(&reply, "clear the slot")
     }
 
     /// Asks the device to load a +Drive sample file into a project RAM slot

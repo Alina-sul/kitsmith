@@ -144,6 +144,21 @@ fn write_op_bodies_frame_opcode_and_nul_terminated_paths() {
 }
 
 #[test]
+fn slot_op_bodies_frame_opcode_and_slot_paths() {
+    // move (0x5A) and swap (0x5D): opcode + two NUL-terminated slot paths;
+    // clear (0x5C): opcode + one path. Same shape as the verified copy 0x5B.
+    assert_eq!(
+        path_op_body(0x5A, &["/projects/20", "/projects/8"]),
+        b"\x5A/projects/20\0/projects/8\0"
+    );
+    assert_eq!(
+        path_op_body(0x5D, &["/projects/3", "/projects/4"]),
+        b"\x5D/projects/3\0/projects/4\0"
+    );
+    assert_eq!(path_op_body(0x5C, &["/projects/7"]), b"\x5C/projects/7\0");
+}
+
+#[test]
 fn factory_tree_is_recognized_as_protected() {
     assert!(is_protected_drive_path("/factory"));
     assert!(is_protected_drive_path("/FACTORY/kicks"));
