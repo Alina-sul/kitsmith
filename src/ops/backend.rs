@@ -93,6 +93,13 @@ pub trait DeviceBackend {
     /// Fresh-reads the active project's RAM sample-slot table.
     fn ram_sample_slots(&mut self) -> Result<Vec<RamSlot>, OpError>;
 
+    /// Fresh-reads one Sound Pool slot, renames its Sound and writes it back
+    /// (drift-guarded like kit edits).
+    fn rename_pool_sound(&mut self, pool_index: u8, name: &str) -> Result<(), OpError>;
+
+    /// Fresh-reads one Sound Pool slot's Sound name.
+    fn read_pool_sound_name(&mut self, pool_index: u8) -> Result<String, OpError>;
+
     /// Downloads one +Drive sample and stores it as a WAV under `dest` plus
     /// a JSON sidecar naming its origin (`path`, `hash`, `size`) — the local
     /// pre-delete backup. Returns the WAV path written.

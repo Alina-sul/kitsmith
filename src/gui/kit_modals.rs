@@ -1,6 +1,7 @@
-//! Quick-rename modal for kits and track Sounds: a one-edit draft through
-//! the same `Plan::edit_kit` pipeline as the kit editor (session backup,
-//! drift guard, read-back verify) — no need to enter edit mode for a rename.
+//! Quick-rename modal for kits, track Sounds and pool Sounds. Kit/Sound
+//! renames ride `Plan::edit_kit` (one-edit drafts); pool renames ride
+//! `Plan::rename_pool_sound` — all through the same session-backup, drift
+//! guard, read-back-verify pipeline, no edit mode needed.
 
 use eframe::egui::{self, RichText};
 
@@ -10,6 +11,11 @@ use crate::gui::theme;
 use crate::model::edit::{FieldValue, KitEditDraft, KitField, NAME_MAX_LEN};
 use crate::model::names;
 use crate::ops::Plan;
+
+/// Post-plan guidance for pool-Sound writes (held in working RAM like kit
+/// changes, persisted with the project).
+const POOL_WRITE_POST_NOTE: &str =
+    "Save the project on the device (PROJECT → SAVE) to persist the new name.";
 
 /// Opens the modal on `target`, prefilled with the current name so an
 /// untouched draft reads as "unchanged", never as an empty error.
@@ -21,10 +27,6 @@ pub fn open(app: &mut KitsmithApp, target: KitRenameTarget) {
 pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
     let Some(target) = app.ui_state.kit_rename else {
         return;
-    };
-    let (kit_index, field) = match target {
-        KitRenameTarget::Kit(kit) => (kit, KitField::KitName),
-        KitRenameTarget::Sound { kit, track } => (kit, KitField::SoundName(track)),
     };
     let current = current_name(app, target).unwrap_or_default();
     // The old name stays visible in the title even after the field is
@@ -38,15 +40,20 @@ pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
         KitRenameTarget::Sound { track, .. } => {
             format!("Rename {} · {current}?", names::track_label(track))
         }
+        KitRenameTarget::PoolSound(slot) if current.is_empty() => {
+            format!("Rename pool sound {:03}?", slot + 1)
+        }
+        KitRenameTarget::PoolSound(slot) => {
+            format!("Rename pool sound {:03} · {current}?", slot + 1)
+        }
     };
     // A draft the user typed in the editor for this same field would win
     // over this rename when it is saved later — say so up front.
-    let draft_conflict = app
-        .ui_state
-        .kits
-        .edit_draft
-        .as_ref()
-        .is_some_and(|d| d.kit_index == kit_index && d.value(field).is_some());
+    let draft_conflict = match target {
+        KitRenameTarget::Kit(kit) => draft_holds(app, kit, KitField::KitName),
+        KitRenameTarget::Sound { kit, track } => draft_holds(app, kit, KitField::SoundName(track)),
+        KitRenameTarget::PoolSound(_) => false,
+    };
     let connected = app.connected_in_port().is_some();
     let busy = app.device_busy();
     let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
@@ -94,10 +101,32 @@ pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
 
             let new_name = app.ui_state.kit_rename_draft.trim().to_owned();
             let not_ready = new_name.is_empty() || new_name == current;
-            let plan = (!not_ready).then(|| {
-                let mut draft = KitEditDraft::new(kit_index);
-                draft.push(field, FieldValue::Text(new_name.clone()));
-                (Plan::edit_kit(&draft, app.execute.backup_taken()), draft)
+            // Kit/Sound renames compile to a one-edit kit draft; pool
+            // renames get their own plan (no draft).
+            let plan = (!not_ready).then(|| match target {
+                KitRenameTarget::Kit(kit) => {
+                    let mut draft = KitEditDraft::new(kit);
+                    draft.push(KitField::KitName, FieldValue::Text(new_name.clone()));
+                    (
+                        Plan::edit_kit(&draft, app.execute.backup_taken()),
+                        Some(draft),
+                    )
+                }
+                KitRenameTarget::Sound { kit, track } => {
+                    let mut draft = KitEditDraft::new(kit);
+                    draft.push(
+                        KitField::SoundName(track),
+                        FieldValue::Text(new_name.clone()),
+                    );
+                    (
+                        Plan::edit_kit(&draft, app.execute.backup_taken()),
+                        Some(draft),
+                    )
+                }
+                KitRenameTarget::PoolSound(slot) => (
+                    Plan::rename_pool_sound(slot, &new_name, app.execute.backup_taken()),
+                    None,
+                ),
             });
             match &plan {
                 Some((Ok(plan), _)) => {
@@ -108,7 +137,7 @@ pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
                         );
                     }
                     ui.label(
-                        RichText::new("The rename is verified by reading the kit back.")
+                        RichText::new("The rename is verified by reading the object back.")
                             .color(theme::TEXT_SECONDARY),
                     );
                     ui.collapsing("Technical steps", |ui| {
@@ -152,14 +181,25 @@ pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
             });
             if confirm {
                 if let Some((Ok(plan), draft)) = plan {
+                    let post_note = match target {
+                        KitRenameTarget::PoolSound(_) => POOL_WRITE_POST_NOTE,
+                        _ => KIT_WRITE_POST_NOTE,
+                    };
                     if let Some(port) = app.connected_in_port() {
-                        if app.execute.launch(
-                            plan,
-                            port,
-                            ctx.clone(),
-                            Some(KIT_WRITE_POST_NOTE.to_owned()),
-                        ) {
-                            app.ui_state.kits.pending_save = Some((draft, SaveOrigin::QuickRename));
+                        if app
+                            .execute
+                            .launch(plan, port, ctx.clone(), Some(post_note.to_owned()))
+                        {
+                            match (target, draft) {
+                                (KitRenameTarget::PoolSound(slot), _) => {
+                                    app.ui_state.pending_pool_rename = Some((slot, new_name));
+                                }
+                                (_, Some(draft)) => {
+                                    app.ui_state.kits.pending_save =
+                                        Some((draft, SaveOrigin::QuickRename));
+                                }
+                                _ => {}
+                            }
                             app.ui_state.kit_rename = None;
                         } else {
                             app.toast(
@@ -178,6 +218,15 @@ pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
     }
 }
 
+/// Whether the open kit-editor draft already carries an edit of `field`.
+fn draft_holds(app: &KitsmithApp, kit_index: usize, field: KitField) -> bool {
+    app.ui_state
+        .kits
+        .edit_draft
+        .as_ref()
+        .is_some_and(|d| d.kit_index == kit_index && d.value(field).is_some())
+}
+
 /// The target's current name (cleaned), for prefill and the unchanged check.
 fn current_name(app: &KitsmithApp, target: KitRenameTarget) -> Option<String> {
     let model = app.model.as_ref()?;
@@ -190,6 +239,10 @@ fn current_name(app: &KitsmithApp, target: KitRenameTarget) -> Option<String> {
             .kits
             .get(kit)
             .and_then(|k| k.sounds.get(track))
+            .map(|s| names::clean(&s.name).to_owned()),
+        KitRenameTarget::PoolSound(slot) => model
+            .pool_sounds
+            .get(usize::from(slot))
             .map(|s| names::clean(&s.name).to_owned()),
     }
 }

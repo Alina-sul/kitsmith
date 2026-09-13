@@ -97,6 +97,11 @@ pub enum OpStep {
         name: String,
         expect: DriveEntryExpect,
     },
+    /// Rename one Sound Pool slot's Sound (fresh read + drift guard, same
+    /// policy as kit edits).
+    RenamePoolSound { pool_index: u8, name: String },
+    /// Read the pool Sound back and check its name (NUL padding ignored).
+    VerifyPoolSoundName { pool_index: u8, expected: String },
 }
 
 impl OpStep {
@@ -150,6 +155,14 @@ impl OpStep {
                     format!("re-list {dir} and verify {name} is there with unchanged content")
                 }
             },
+            Self::RenamePoolSound { pool_index, name } => format!(
+                "pool sound {:03}: set the name to “{name}” and write it back",
+                pool_index + 1
+            ),
+            Self::VerifyPoolSoundName { pool_index, .. } => format!(
+                "read pool sound {:03} back and verify its name",
+                pool_index + 1
+            ),
         }
     }
 }
@@ -426,6 +439,34 @@ impl Plan {
         })
     }
 
+    /// A plan that renames one Sound Pool slot's Sound, prepending the
+    /// session backup when one has not been taken yet.
+    pub fn rename_pool_sound(
+        pool_index: u8,
+        name: &str,
+        backup_taken: bool,
+    ) -> Result<Self, OpError> {
+        if pool_index >= 128 {
+            return Err(OpError::InvalidRequest(format!(
+                "pool slot must be 0–127, got {pool_index}"
+            )));
+        }
+        crate::model::edit::validate_name(name).map_err(OpError::InvalidRequest)?;
+        let mut steps = session_backup(backup_taken);
+        steps.push(OpStep::RenamePoolSound {
+            pool_index,
+            name: name.to_owned(),
+        });
+        steps.push(OpStep::VerifyPoolSoundName {
+            pool_index,
+            expected: name.to_owned(),
+        });
+        Ok(Self {
+            title: format!("Rename pool sound {:03}", pool_index + 1),
+            steps,
+        })
+    }
+
     /// A plan that writes a transferred kit into the active project.
     /// Always backs up first (the active project changed since any earlier
     /// session backup — that is the point of a cross-project paste).
@@ -545,6 +586,13 @@ pub fn execute(
             OpStep::VerifyDriveEntry { dir, name, expect } => {
                 verify_drive_entry(backend, dir, name, expect)
             }
+            OpStep::RenamePoolSound { pool_index, name } => {
+                backend.rename_pool_sound(*pool_index, name)
+            }
+            OpStep::VerifyPoolSoundName {
+                pool_index,
+                expected,
+            } => verify_pool_sound_name(backend, *pool_index, expected),
         };
         match result {
             Ok(()) => {
@@ -589,6 +637,25 @@ fn verify_kit_fields(
         }
     }
     Ok(())
+}
+
+/// Read-back verification of a pool Sound's name (device names come back
+/// NUL-padded to 15 bytes — trim before comparing).
+fn verify_pool_sound_name(
+    backend: &mut dyn DeviceBackend,
+    pool_index: u8,
+    expected: &str,
+) -> Result<(), OpError> {
+    let read = backend.read_pool_sound_name(pool_index)?;
+    if read.trim_end_matches('\0') == expected.trim_end_matches('\0') {
+        Ok(())
+    } else {
+        Err(OpError::VerificationFailed(format!(
+            "pool sound {:03}: wrote \"{expected}\", device reports \"{}\"",
+            pool_index + 1,
+            read.trim_end_matches('\0')
+        )))
+    }
 }
 
 /// Read-back verification of a written kit's sample slots.

@@ -104,6 +104,7 @@ pub enum SaveOrigin {
 pub enum KitRenameTarget {
     Kit(usize),
     Sound { kit: usize, track: usize },
+    PoolSound(u8),
 }
 
 /// All per-frame-persistent UI state, separate from device/model state.
@@ -139,9 +140,11 @@ pub struct UiState {
     pub clear_confirm_draft: String,
     /// Restore-from-backup modal: the (empty) slot to re-upload into.
     pub restore_modal_slot: Option<u32>,
-    /// Quick-rename modal for a kit or a track Sound + the draft name.
+    /// Quick-rename modal for a kit, track Sound or pool Sound + the draft.
     pub kit_rename: Option<KitRenameTarget>,
     pub kit_rename_draft: String,
+    /// A launched pool-Sound rename awaiting its plan report: (slot, name).
+    pub pending_pool_rename: Option<(u8, String)>,
     /// Attestation checkbox shared by the slot-op modals ("the project in
     /// this slot is not currently loaded on the device") — the active slot
     /// is unreadable, so the user's word is the only possible guard.
