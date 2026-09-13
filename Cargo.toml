@@ -6,6 +6,7 @@ description = "Smart dashboard for the Elektron Analog Rytm MKII"
 license = "MIT"
 
 [dependencies]
+cpal = "0.16"
 eframe = "0.35.0"
 hound = "3.5.1"
 midir = "0.10"

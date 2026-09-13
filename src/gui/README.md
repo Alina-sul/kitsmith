@@ -11,7 +11,7 @@ through the preview modal.
 | --- | --- |
 | `app.rs` | App state, navigation routing, drag-anywhere ingestion, toasts, activity log |
 | `theme.rs` | All design tokens (dark palette, typography scale, layout sizes) + `apply()` |
-| `top_bar.rs` | 52 px app bar: device pill, breadcrumb, sync states, Import shortcut |
+| `top_bar.rs` | 52 px app bar: device pill, breadcrumb, sync states, Import shortcut, audio-monitor toggle |
 | `sidebar.rs` | Top-level navigation + the project browser (search, slot rows) |
 | `views/project.rs` | Project workspace header, LIVE/CACHED/PARTIAL state, tab row |
 | `views/kits.rs` | Kit list (filters/search), 12-pad grid, track inspector, sample rail |
