@@ -216,6 +216,13 @@ impl FileClient {
             body.extend_from_slice(&chunk_seq.to_be_bytes());
             let reply = self.transact(link, &body)?;
             let chunk = parse_data_chunk(&reply)?;
+            // Check the device-reported CRC before trusting the payload —
+            // downloads back slot ops as the only recovery copy, so damaged
+            // bytes must never be saved as a "backup". Empty chunks carry
+            // uninitialized fields (hardware-verified) and are skipped.
+            if !chunk.data.is_empty() && crc32(0xFFFF_FFFF, &chunk.data) != chunk.crc {
+                return None;
+            }
             bytes.extend_from_slice(&chunk.data);
             on_chunk(&chunk, bytes.len());
             chunk_seq = chunk_seq.wrapping_add(1);

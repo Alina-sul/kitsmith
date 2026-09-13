@@ -30,6 +30,8 @@ pub enum FileOp {
     SwapProjects { a: u32, b: u32 },
     /// Clear a project slot (mandatory local backup before the clear).
     ClearProject { slot: u32 },
+    /// Re-upload a locally backed-up project into its (empty) slot.
+    RestoreProject { slot: u32 },
     /// Load a +Drive sample file into a free project RAM slot.
     LoadDriveSample { drive_path: String, slot: u8 },
 }
@@ -44,6 +46,9 @@ impl FileOp {
             Self::MoveProject { src, dst } => format!("Move project {src:03} to slot {dst:03}"),
             Self::SwapProjects { a, b } => format!("Swap projects {a:03} and {b:03}"),
             Self::ClearProject { slot } => format!("Clear project slot {slot:03}"),
+            Self::RestoreProject { slot } => {
+                format!("Restore project slot {slot:03} from the local backup")
+            }
             Self::LoadDriveSample { drive_path, slot } => {
                 format!("Load {drive_path} into sample slot {slot:03}")
             }
@@ -59,6 +64,7 @@ pub enum FileOpOutcome {
     Moved { src: u32, dst: u32, name: String },
     Swapped { a: u32, b: u32 },
     Cleared { slot: u32 },
+    Restored { slot: u32, name: String },
     SampleLoaded(SampleSlotInfo),
 }
 
@@ -147,6 +153,7 @@ fn run_op(in_port: &str, op: &FileOp) -> Result<(FileOpOutcome, String), String>
         FileOp::MoveProject { src, dst } => move_project(&mut link, &mut client, *src, *dst),
         FileOp::SwapProjects { a, b } => swap_projects(&mut link, &mut client, *a, *b),
         FileOp::ClearProject { slot } => clear_project(&mut link, &mut client, *slot),
+        FileOp::RestoreProject { slot } => restore_project(&mut link, &mut client, *slot),
         FileOp::LoadDriveSample { drive_path, slot } => {
             load_drive_sample(&mut link, &mut client, drive_path, *slot)
         }
@@ -178,18 +185,61 @@ fn backup_slot(
     Ok(download.bytes)
 }
 
-/// Fresh slot listing, as (id → has_valid_data) pairs for preflights.
-fn list_slots(link: &mut MidiLink, client: &mut FileClient) -> Result<Vec<(u32, bool)>, String> {
+/// One project slot's identity in a listing snapshot.
+type SlotSnapshot = std::collections::BTreeMap<u32, (String, bool)>;
+
+/// Fresh slot listing as id → (name, has_valid_data).
+fn snapshot_slots(link: &mut MidiLink, client: &mut FileClient) -> Result<SlotSnapshot, String> {
     Ok(client
         .list_data_dir(link, PROJECTS_PATH)
         .ok_or("could not list project slots")?
         .into_iter()
-        .filter_map(|e| e.id.map(|id| (id, e.has_valid_data)))
+        .filter_map(|e| e.id.map(|id| (id, (e.name, e.has_valid_data))))
         .collect())
 }
 
-fn slot_is_valid(slots: &[(u32, bool)], id: u32) -> bool {
-    slots.iter().any(|&(slot, valid)| slot == id && valid)
+fn slot_is_valid(slots: &SlotSnapshot, id: u32) -> bool {
+    slots.get(&id).is_some_and(|(_, valid)| *valid)
+}
+
+/// With the slot-op framing unverified, the realistic failure mode is a
+/// misrouted path hitting a slot we never named. Every slot except the
+/// intended ones must be identical between the pre- and post-op listings.
+fn verify_untouched_slots(
+    before: &SlotSnapshot,
+    after: &SlotSnapshot,
+    touched: &[u32],
+) -> Result<(), String> {
+    let changed: Vec<u32> = before
+        .keys()
+        .chain(after.keys())
+        .filter(|id| !touched.contains(id))
+        .filter(|id| before.get(id) != after.get(id))
+        .copied()
+        .collect();
+    if changed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "slots {} changed even though the operation never named them — \
+             STOP and re-sync; do not run further slot operations before \
+             checking the device",
+            changed
+                .iter()
+                .map(|id| format!("{id:03}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+}
+
+/// Absolute path of one slot's local backup payload, for error messages.
+fn backup_file_path(slot: u32) -> String {
+    cache::default_dir()
+        .join("projects")
+        .join(format!("{slot:03}.bin"))
+        .display()
+        .to_string()
 }
 
 fn move_project(
@@ -198,18 +248,13 @@ fn move_project(
     src: u32,
     dst: u32,
 ) -> Result<(FileOpOutcome, String), String> {
-    let entries = client
-        .list_data_dir(link, PROJECTS_PATH)
-        .ok_or("could not list project slots")?;
-    let name = entries
-        .iter()
-        .find(|e| e.id == Some(src) && e.has_valid_data)
-        .map(|e| e.name.clone())
+    let before = snapshot_slots(link, client)?;
+    let name = before
+        .get(&src)
+        .filter(|(_, valid)| *valid)
+        .map(|(name, _)| name.clone())
         .ok_or(format!("source project {src:03} not found"))?;
-    if entries
-        .iter()
-        .any(|e| e.id == Some(dst) && e.has_valid_data)
-    {
+    if slot_is_valid(&before, dst) {
         return Err(format!("slot {dst:03} is not empty — move refused"));
     }
     // The pre-move download is both the safety backup and the verify oracle.
@@ -221,26 +266,42 @@ fn move_project(
         &format!("{PROJECTS_PATH}/{dst}"),
     )?;
 
-    let slots = list_slots(link, client)?;
-    if slot_is_valid(&slots, src) || !slot_is_valid(&slots, dst) {
+    let after = snapshot_slots(link, client)?;
+    verify_untouched_slots(&before, &after, &[src, dst])?;
+    if slot_is_valid(&after, src) || !slot_is_valid(&after, dst) {
         return Err(format!(
-            "move sent but the slots read back wrong (src {src:03} \
-             occupied: {}, dst {dst:03} occupied: {}) — restore from the \
-             local backup if needed",
-            slot_is_valid(&slots, src),
-            slot_is_valid(&slots, dst)
+            "the move command ran but the device listing does not match \
+             afterwards — nothing was changed locally. Re-sync and check \
+             slots {src:03} and {dst:03} before retrying; the pre-move \
+             backup is at {}",
+            backup_file_path(src)
         ));
     }
     let moved = client
         .download_data(link, &format!("{PROJECTS_PATH}/{dst}"), false, |_, _| {})
-        .ok_or("move verified by listing, but the verification download failed")?;
+        .ok_or(
+            "the move looks complete, but the verification download failed — \
+             re-sync and open the project before trusting it",
+        )?;
     if moved.bytes != original {
-        return Err(format!(
-            "project arrived at slot {dst:03} but differs from the original — \
-             do not trust it; the pre-move backup of {src:03} is on disk"
-        ));
+        // The source is empty and the destination is wrong: put the original
+        // back where it came from (same recovery rename already performs).
+        let restore =
+            client.upload_data(link, &format!("{PROJECTS_PATH}/{src}"), &original, |_| {});
+        return Err(match restore {
+            Ok(()) => format!(
+                "the project arrived at slot {dst:03} damaged — the original \
+                 was restored to slot {src:03}. Re-sync before retrying"
+            ),
+            Err(e) => format!(
+                "the project arrived at slot {dst:03} damaged AND restoring \
+                 to {src:03} failed ({e}) — restore manually from {}",
+                backup_file_path(src)
+            ),
+        });
     }
-    // Index the payload under its new slot so it stays browsable.
+    // The verified bytes now live at dst: index them there and drop the
+    // stale src entry (identical content — no recovery is lost).
     let _ = cache::save_project_backup(
         &cache::default_dir(),
         dst,
@@ -249,6 +310,7 @@ fn move_project(
         crc32(0, &moved.bytes),
         true,
     );
+    let _ = cache::remove_project_backup(&cache::default_dir(), src);
     Ok((
         FileOpOutcome::Moved {
             src,
@@ -265,14 +327,16 @@ fn swap_projects(
     a: u32,
     b: u32,
 ) -> Result<(FileOpOutcome, String), String> {
-    let slots = list_slots(link, client)?;
+    let before = snapshot_slots(link, client)?;
     for slot in [a, b] {
-        if !slot_is_valid(&slots, slot) {
+        if !slot_is_valid(&before, slot) {
             return Err(format!(
                 "slot {slot:03} is empty — use Move instead of Swap"
             ));
         }
     }
+    let name_a = before.get(&a).map(|(n, _)| n.clone()).unwrap_or_default();
+    let name_b = before.get(&b).map(|(n, _)| n.clone()).unwrap_or_default();
     let payload_a = backup_slot(link, client, a, "(pre-swap)")?;
     let payload_b = backup_slot(link, client, b, "(pre-swap)")?;
 
@@ -282,6 +346,8 @@ fn swap_projects(
         &format!("{PROJECTS_PATH}/{b}"),
     )?;
 
+    let after = snapshot_slots(link, client)?;
+    verify_untouched_slots(&before, &after, &[a, b])?;
     // Verify crosswise: each slot must now hold the other's exact bytes.
     for (slot, expected) in [(a, &payload_b), (b, &payload_a)] {
         let read = client
@@ -289,11 +355,34 @@ fn swap_projects(
             .ok_or("swap sent but a verification download failed")?;
         if &read.bytes != expected {
             return Err(format!(
-                "swap sent but slot {slot:03} does not hold the expected \
-                 project — both pre-swap backups are on disk"
+                "after the swap, slot {slot:03} does not hold the expected \
+                 project — re-sync and check both slots before touching them. \
+                 The pre-swap backups are at {} and {}",
+                backup_file_path(a),
+                backup_file_path(b)
             ));
         }
     }
+    // Local mirrors must match the device: re-save both backups crosswise
+    // under their new slots (with real names, not the pre-swap labels), or
+    // every snapshot-driven view serves the wrong project.
+    let cache_dir = cache::default_dir();
+    let _ = cache::save_project_backup(
+        &cache_dir,
+        a,
+        &name_b,
+        &payload_b,
+        crc32(0, &payload_b),
+        true,
+    );
+    let _ = cache::save_project_backup(
+        &cache_dir,
+        b,
+        &name_a,
+        &payload_a,
+        crc32(0, &payload_a),
+        true,
+    );
     Ok((
         FileOpOutcome::Swapped { a, b },
         format!("Projects {a:03} and {b:03} swapped and verified byte-for-byte"),
@@ -305,24 +394,93 @@ fn clear_project(
     client: &mut FileClient,
     slot: u32,
 ) -> Result<(FileOpOutcome, String), String> {
-    let slots = list_slots(link, client)?;
-    if !slot_is_valid(&slots, slot) {
+    let before = snapshot_slots(link, client)?;
+    if !slot_is_valid(&before, slot) {
         return Err(format!("slot {slot:03} is already empty"));
     }
-    // Mandatory backup; a failed save aborts before anything is sent.
-    backup_slot(link, client, slot, "(pre-clear)")?;
+    // Mandatory backup; a failed save aborts before anything is sent. The
+    // manifest entry stays keyed to this slot on purpose — it is what
+    // "Restore from backup" re-uploads.
+    backup_slot(link, client, slot, "(cleared — restorable)")?;
 
     client.clear_data(link, &format!("{PROJECTS_PATH}/{slot}"))?;
 
-    let slots = list_slots(link, client)?;
-    if slot_is_valid(&slots, slot) {
+    let after = snapshot_slots(link, client)?;
+    verify_untouched_slots(&before, &after, &[slot])?;
+    if slot_is_valid(&after, slot) {
         return Err(format!(
-            "clear sent but slot {slot:03} still reads as occupied"
+            "the clear command ran but slot {slot:03} still reads as \
+             occupied — re-sync and retry"
         ));
     }
     Ok((
         FileOpOutcome::Cleared { slot },
-        format!("Project slot {slot:03} cleared — the pre-clear backup is on disk"),
+        format!(
+            "Project slot {slot:03} cleared — restore it any time via \
+             “Restore from backup” on the empty slot"
+        ),
+    ))
+}
+
+/// Re-uploads a locally backed-up project into its (empty) slot — the
+/// recovery path that makes the pre-clear backup a real promise.
+fn restore_project(
+    link: &mut MidiLink,
+    client: &mut FileClient,
+    slot: u32,
+) -> Result<(FileOpOutcome, String), String> {
+    let cache_dir = cache::default_dir();
+    let manifest = cache::load_project_manifest(&cache_dir);
+    let backup = manifest
+        .get(&slot)
+        .ok_or(format!("no local backup exists for slot {slot:03}"))?;
+    if !backup.raw {
+        return Err(format!(
+            "the backup for slot {slot:03} is in the old compressed format \
+             and cannot be re-uploaded"
+        ));
+    }
+    let payload = cache::load_project_backup(&cache_dir, slot)
+        .ok_or(format!("the backup file for slot {slot:03} is missing"))?;
+    if crc32(0, &payload) != backup.crc {
+        return Err(format!(
+            "the backup file for slot {slot:03} does not match its recorded \
+             checksum — refusing to upload a damaged payload"
+        ));
+    }
+    let before = snapshot_slots(link, client)?;
+    if slot_is_valid(&before, slot) {
+        return Err(format!(
+            "slot {slot:03} is occupied on the device — restore refused \
+             (clear it first if you really want to overwrite)"
+        ));
+    }
+
+    client.upload_data(link, &format!("{PROJECTS_PATH}/{slot}"), &payload, |_| {})?;
+
+    let after = snapshot_slots(link, client)?;
+    verify_untouched_slots(&before, &after, &[slot])?;
+    let read = client
+        .download_data(link, &format!("{PROJECTS_PATH}/{slot}"), false, |_, _| {})
+        .ok_or("upload sent but the verification download failed — re-sync")?;
+    if read.bytes != payload {
+        return Err(format!(
+            "the restored project reads back differently than the backup — \
+             do not trust slot {slot:03}; the backup at {} is untouched",
+            backup_file_path(slot)
+        ));
+    }
+    // The slot is live again: parse the real name for the model/manifest.
+    let name = projfile::parse_raw_project(&payload)
+        .map(|s| s.name)
+        .unwrap_or_default();
+    let _ = cache::save_project_backup(&cache_dir, slot, &name, &payload, crc32(0, &payload), true);
+    Ok((
+        FileOpOutcome::Restored {
+            slot,
+            name: name.clone(),
+        },
+        format!("Project “{name}” restored to slot {slot:03} and verified byte-for-byte"),
     ))
 }
 

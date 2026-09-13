@@ -121,6 +121,8 @@ pub struct UiState {
     /// Clear-slot modal: the slot + the typed slot-number confirmation.
     pub clear_modal_slot: Option<u32>,
     pub clear_confirm_draft: String,
+    /// Restore-from-backup modal: the (empty) slot to re-upload into.
+    pub restore_modal_slot: Option<u32>,
     /// Attestation checkbox shared by the slot-op modals ("the project in
     /// this slot is not currently loaded on the device") — the active slot
     /// is unreadable, so the user's word is the only possible guard.
@@ -523,7 +525,13 @@ impl KitsmithApp {
                 }
                 Err(e) => {
                     self.toast(format!("Operation failed: {e}"));
-                    self.log_activity(ActivityKind::Error, format!("Operation failed: {e}"), None);
+                    // Short headline; the full explanation goes to the
+                    // Activity entry's detail where it can be re-read.
+                    self.log_activity(
+                        ActivityKind::Error,
+                        "Device operation failed".to_owned(),
+                        Some(e),
+                    );
                 }
             }
         }
@@ -577,6 +585,11 @@ impl KitsmithApp {
                 self.raw_snapshots.remove(&dst);
                 self.raw_models.remove(&src);
                 self.raw_models.remove(&dst);
+                // The selected noun is the project, not the slot number —
+                // the selection follows it.
+                if self.ui_state.project == ProjectSelection::Slot(src) {
+                    self.ui_state.project = ProjectSelection::Slot(dst);
+                }
             }
             FileOpOutcome::Swapped { a, b } => {
                 if let Some(model) = self.model.as_mut() {
@@ -597,10 +610,32 @@ impl KitsmithApp {
                     self.raw_snapshots.remove(&slot);
                     self.raw_models.remove(&slot);
                 }
+                if self.ui_state.project == ProjectSelection::Slot(a) {
+                    self.ui_state.project = ProjectSelection::Slot(b);
+                } else if self.ui_state.project == ProjectSelection::Slot(b) {
+                    self.ui_state.project = ProjectSelection::Slot(a);
+                }
             }
             FileOpOutcome::Cleared { slot } => {
                 if let Some(model) = self.model.as_mut() {
                     model.projects.retain(|p| p.id != slot);
+                    let _ = cache::save(model);
+                }
+                self.manifest = cache::load_project_manifest(&cache::default_dir());
+                self.raw_snapshots.remove(&slot);
+                self.raw_models.remove(&slot);
+                // The selected project no longer exists on the device.
+                if self.ui_state.project == ProjectSelection::Slot(slot) {
+                    self.ui_state.project = ProjectSelection::Active;
+                }
+            }
+            FileOpOutcome::Restored { slot, name } => {
+                if let Some(model) = self.model.as_mut() {
+                    model.projects.retain(|p| p.id != slot);
+                    model
+                        .projects
+                        .push(crate::model::ProjectInfo { id: slot, name });
+                    model.projects.sort_by_key(|p| p.id);
                     let _ = cache::save(model);
                 }
                 self.manifest = cache::load_project_manifest(&cache::default_dir());
@@ -680,6 +715,16 @@ impl KitsmithApp {
                 &self.sync_misses,
             ),
         }
+    }
+
+    /// True while ANY controller is talking to the device — file ops, an
+    /// ops plan, the backup indexer, or a sync. The port carries one serial
+    /// conversation; nothing may start while another is running.
+    pub(crate) fn device_busy(&self) -> bool {
+        self.fileops.is_running()
+            || self.execute.is_busy()
+            || self.backup.is_running()
+            || self.sync.is_running()
     }
 
     pub(crate) fn connected_in_port(&self) -> Option<String> {

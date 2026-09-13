@@ -15,13 +15,102 @@ pub fn show(app: &mut KitsmithApp, ctx: &egui::Context) {
     move_modal(app, ctx);
     swap_modal(app, ctx);
     clear_modal(app, ctx);
+    restore_modal(app, ctx);
     load_sample_modal(app, ctx);
 }
 
-/// The framing for slot moves/swaps/clears comes from the protocol spec and
-/// is not hardware-verified yet — the modals say so.
-const SLOT_OP_UNVERIFIED: &str = "This operation's wire format is not hardware-verified yet — \
-     first use should target scratch slots (docs/hardware-verification.md).";
+fn restore_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
+    let Some(slot) = app.ui_state.restore_modal_slot else {
+        return;
+    };
+    let connected = app.connected_in_port().is_some();
+    let busy = app.device_busy();
+    let backup = app.manifest.get(&slot).cloned();
+    let mut close = false;
+    let mut confirm = false;
+
+    egui::Window::new(format!("Restore slot {slot:03} from the local backup?"))
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            match &backup {
+                Some(b) => {
+                    let label = if b.name.trim().is_empty() {
+                        format!("{} KB backup", b.bytes / 1024)
+                    } else {
+                        format!("“{}” ({} KB)", b.name, b.bytes / 1024)
+                    };
+                    ui.label(format!(
+                        "Re-uploads {label} into the empty slot {slot:03} and verifies \
+                         it byte-for-byte against the backup."
+                    ));
+                }
+                None => {
+                    ui.label(
+                        RichText::new("No local backup exists for this slot.").color(theme::DANGER),
+                    );
+                }
+            }
+            ui.add_space(theme::GAP_S);
+            ui.horizontal(|ui| {
+                let restorable = backup.as_ref().is_some_and(|b| b.raw);
+                let blocker = if !connected {
+                    Some("Connect the Rytm first")
+                } else if busy {
+                    Some("Another device operation is still running")
+                } else if !restorable {
+                    Some("No restorable backup for this slot")
+                } else {
+                    None
+                };
+                if ui
+                    .add_enabled(blocker.is_none(), egui::Button::new("Restore project"))
+                    .on_disabled_hover_text(blocker.unwrap_or_default())
+                    .clicked()
+                {
+                    confirm = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+            });
+        });
+
+    if confirm {
+        app.ui_state.restore_modal_slot = None;
+        start_op(app, ctx, FileOp::RestoreProject { slot });
+    } else if close {
+        app.ui_state.restore_modal_slot = None;
+    }
+}
+
+/// Slot moves/swaps/clears are not hardware-verified yet — the modals say
+/// what to *do* about that (the technical ledger lives in Diagnostics/docs).
+const SLOT_OP_UNVERIFIED: &str = "This operation hasn't been verified on real hardware yet. \
+     Try it first on a copy of a project, in a slot you don't mind losing.";
+
+/// First unmet precondition for a slot-op confirm button, so the disabled
+/// hover names the actual blocker instead of listing everything.
+fn first_blocker(
+    connected: bool,
+    busy: bool,
+    slot_ok: Option<&'static str>,
+    ack: bool,
+) -> Option<&'static str> {
+    if !connected {
+        return Some("Connect the Rytm first");
+    }
+    if busy {
+        return Some("Another device operation is still running");
+    }
+    if let Some(problem) = slot_ok {
+        return Some(problem);
+    }
+    if !ack {
+        return Some("Tick the confirmation checkbox first");
+    }
+    None
+}
 
 /// The one guard the hardware allows: the active project slot is unreadable,
 /// so the user attests the touched slots aren't the loaded project.
@@ -64,7 +153,7 @@ fn move_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
         return;
     };
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let src_name = slot_display_name(app, src);
     let dst_occupied = app
         .model
@@ -94,9 +183,9 @@ fn move_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             ui.add_space(4.0);
             ui.label(
                 RichText::new(
-                    "The whole project is downloaded and kept as a local backup first \
-                     (~10 s); after the device-side move, the destination is downloaded \
-                     again and compared byte-for-byte.",
+                    "The whole project is downloaded and kept as a local backup first; \
+                     after the device-side move, the destination is downloaded again \
+                     and compared byte-for-byte (typically 20–40 s in total).",
                 )
                 .color(theme::TEXT_SECONDARY)
                 .size(theme::FONT_META),
@@ -104,14 +193,21 @@ fn move_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             slot_op_guards(app, ui, &[src]);
             ui.add_space(theme::GAP_S);
             ui.horizontal(|ui| {
-                let enabled =
-                    connected && !busy && !dst_occupied && dst != src && app.ui_state.slot_op_ack;
+                let slot_problem = if dst_occupied {
+                    Some("Pick an empty destination slot")
+                } else if dst == src {
+                    Some("Pick a different destination slot")
+                } else {
+                    None
+                };
+                let blocker =
+                    first_blocker(connected, busy, slot_problem, app.ui_state.slot_op_ack);
                 if ui
-                    .add_enabled(enabled, egui::Button::new(format!("Move to slot {dst:03}")))
-                    .on_disabled_hover_text(
-                        "Connect the Rytm, pick an empty destination, and confirm the \
-                         project isn't loaded",
+                    .add_enabled(
+                        blocker.is_none(),
+                        egui::Button::new(format!("Move to slot {dst:03}")),
                     )
+                    .on_disabled_hover_text(blocker.unwrap_or_default())
                     .clicked()
                 {
                     confirm = true;
@@ -138,11 +234,12 @@ fn move_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
 }
 
 fn swap_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
-    let Some((a, mut b)) = app.ui_state.swap_modal else {
+    let Some((a, prev_b)) = app.ui_state.swap_modal else {
         return;
     };
+    let mut b = prev_b;
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let a_name = slot_display_name(app, a);
     let b_occupied = app
         .model
@@ -158,7 +255,12 @@ fn swap_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.label("Swap with slot:");
                 ui.add(egui::DragValue::new(&mut b).range(1..=128));
-                ui.label(RichText::new(slot_display_name(app, b)).color(theme::TEXT_SECONDARY));
+                // Never fabricate a name for an empty slot.
+                if b_occupied {
+                    ui.label(RichText::new(slot_display_name(app, b)).color(theme::TEXT_SECONDARY));
+                } else {
+                    ui.label(RichText::new("Empty").color(theme::TEXT_MUTED));
+                }
             });
             if !b_occupied {
                 ui.label(
@@ -172,9 +274,9 @@ fn swap_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             ui.add_space(4.0);
             ui.label(
                 RichText::new(
-                    "Both projects are downloaded and kept as local backups first \
-                     (~20 s); after the device-side swap, both slots are downloaded \
-                     again and compared crosswise byte-for-byte.",
+                    "Both projects are downloaded and kept as local backups first; \
+                     after the device-side swap, both slots are downloaded again and \
+                     compared crosswise byte-for-byte (typically 40–80 s in total).",
                 )
                 .color(theme::TEXT_SECONDARY)
                 .size(theme::FONT_META),
@@ -182,14 +284,21 @@ fn swap_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             slot_op_guards(app, ui, &[a, b]);
             ui.add_space(theme::GAP_S);
             ui.horizontal(|ui| {
-                let enabled =
-                    connected && !busy && b_occupied && b != a && app.ui_state.slot_op_ack;
+                let slot_problem = if !b_occupied {
+                    Some("Pick an occupied slot to swap with")
+                } else if b == a {
+                    Some("Pick a different slot")
+                } else {
+                    None
+                };
+                let blocker =
+                    first_blocker(connected, busy, slot_problem, app.ui_state.slot_op_ack);
                 if ui
-                    .add_enabled(enabled, egui::Button::new(format!("Swap with slot {b:03}")))
-                    .on_disabled_hover_text(
-                        "Connect the Rytm, pick an occupied slot, and confirm neither \
-                         project is loaded",
+                    .add_enabled(
+                        blocker.is_none(),
+                        egui::Button::new(format!("Swap with slot {b:03}")),
                     )
+                    .on_disabled_hover_text(blocker.unwrap_or_default())
                     .clicked()
                 {
                     confirm = true;
@@ -200,6 +309,11 @@ fn swap_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             });
         });
 
+    // The attestation covers a specific pair — changing the partner slot
+    // voids it (the checkbox is the only guard there is).
+    if b != prev_b {
+        app.ui_state.slot_op_ack = false;
+    }
     app.ui_state.swap_modal = Some((a, b));
     if confirm {
         app.ui_state.swap_modal = None;
@@ -214,7 +328,7 @@ fn clear_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
         return;
     };
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let name = slot_display_name(app, slot);
     let mut close = false;
     let mut confirm = false;
@@ -235,8 +349,10 @@ fn clear_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             slot_op_guards(app, ui, &[slot]);
             ui.add_space(theme::GAP_S);
             ui.horizontal(|ui| {
+                // The number is never confirmed without the name in the same
+                // glance (typing mojibake native names is impractical).
                 ui.label(
-                    RichText::new(format!("Type “{slot:03}” to confirm"))
+                    RichText::new(format!("Type “{slot:03}” to clear {name}"))
                         .color(theme::TEXT_SECONDARY),
                 );
                 ui.add(
@@ -247,13 +363,15 @@ fn clear_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             ui.add_space(theme::GAP_S);
             ui.horizontal(|ui| {
                 let typed = app.ui_state.clear_confirm_draft.trim() == format!("{slot:03}");
-                let enabled = connected && !busy && typed && app.ui_state.slot_op_ack;
+                let slot_problem = (!typed).then_some("Type the slot number first");
+                let blocker =
+                    first_blocker(connected, busy, slot_problem, app.ui_state.slot_op_ack);
                 if ui
-                    .add_enabled(enabled, egui::Button::new("Clear slot"))
-                    .on_disabled_hover_text(
-                        "Connect the Rytm, type the slot number, and confirm the \
-                         project isn't loaded",
+                    .add_enabled(
+                        blocker.is_none(),
+                        egui::Button::new(RichText::new("Clear slot").color(theme::DANGER)),
                     )
+                    .on_disabled_hover_text(blocker.unwrap_or_default())
                     .clicked()
                 {
                     confirm = true;
@@ -289,7 +407,7 @@ fn rename_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
         return;
     };
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let mut close = false;
     let mut confirm = false;
 
@@ -353,7 +471,7 @@ fn copy_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
         return;
     };
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let src_name = app
         .model
         .as_ref()
@@ -423,7 +541,7 @@ fn load_sample_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
         return;
     };
     let connected = app.connected_in_port().is_some();
-    let busy = app.fileops.is_running();
+    let busy = app.device_busy();
     let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
     let mut slot = app.ui_state.load_sample_slot;
     let slot_taken = app

@@ -79,7 +79,7 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
             );
         if app.ui_state.rearrange {
             ui.label(
-                RichText::new("drag a project onto an empty slot")
+                RichText::new("drag a project onto an empty slot to move it")
                     .color(theme::TEXT_MUTED)
                     .size(theme::FONT_META),
             );
@@ -93,6 +93,7 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let mut move_req: Option<u32> = None;
     let mut swap_req: Option<u32> = None;
     let mut clear_req: Option<u32> = None;
+    let mut restore_req: Option<u32> = None;
     let mut drop_req: Option<(u32, u32)> = None;
 
     ScrollArea::vertical().show(ui, |ui| {
@@ -127,7 +128,7 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
             return;
         }
         let query = app.ui_state.project_search.to_lowercase();
-        let busy = app.fileops.is_running();
+        let busy = app.device_busy();
         let rearrange = app.ui_state.rearrange;
         let mut any_shown = false;
         for id in 1..=128u32 {
@@ -168,7 +169,7 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     // while searching); they are the drop targets for
                     // project copies (PRD §7.4).
                     if rearrange && query.is_empty() {
-                        if let Some(src) = empty_slot_row(ui, id) {
+                        if let Some(src) = empty_slot_row(app, ui, id, &mut restore_req) {
                             drop_req = Some((src, id));
                         }
                     }
@@ -193,7 +194,7 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     }
     if let Some(src) = move_req {
         let dst = first_empty_slot(app).unwrap_or(1);
-        app.ui_state.slot_op_ack = false;
+        open_slot_op_modal(app);
         app.ui_state.move_modal = Some((src, dst));
     }
     if let Some(a) = swap_req {
@@ -203,20 +204,35 @@ fn project_browser(app: &mut KitsmithApp, ui: &mut egui::Ui) {
             .as_ref()
             .and_then(|m| m.projects.iter().map(|p| p.id).find(|&id| id != a))
             .unwrap_or(a);
-        app.ui_state.slot_op_ack = false;
+        open_slot_op_modal(app);
         app.ui_state.swap_modal = Some((a, b));
     }
     if let Some(slot) = clear_req {
-        app.ui_state.slot_op_ack = false;
-        app.ui_state.clear_confirm_draft.clear();
+        open_slot_op_modal(app);
         app.ui_state.clear_modal_slot = Some(slot);
+    }
+    if let Some(slot) = restore_req {
+        open_slot_op_modal(app);
+        app.ui_state.restore_modal_slot = Some(slot);
     }
     if let Some((src, dst)) = drop_req {
         // Rearrange means relocation: a drop opens the Move dialog (Copy
         // stays one click away inside it).
-        app.ui_state.slot_op_ack = false;
+        open_slot_op_modal(app);
         app.ui_state.move_modal = Some((src, dst));
     }
+}
+
+/// Opening any slot-op modal closes its siblings and voids the attestation:
+/// the checkbox is one shared flag, and a tick given in one dialog must
+/// never arm another.
+fn open_slot_op_modal(app: &mut KitsmithApp) {
+    app.ui_state.slot_op_ack = false;
+    app.ui_state.clear_confirm_draft.clear();
+    app.ui_state.move_modal = None;
+    app.ui_state.swap_modal = None;
+    app.ui_state.clear_modal_slot = None;
+    app.ui_state.restore_modal_slot = None;
 }
 
 /// Smallest project slot that holds no project.
@@ -334,13 +350,20 @@ fn project_row(
     }
 }
 
-/// A dim `Empty` row that accepts a dragged project. Returns the source slot
-/// when a drag was dropped here.
-fn empty_slot_row(ui: &mut egui::Ui, id: u32) -> Option<u32> {
+/// A dim `Empty` row that accepts a dragged project (announcing the verb —
+/// dropping here MOVES the project) and offers restore when a local backup
+/// exists for this slot. Returns the source slot when a drag was dropped.
+fn empty_slot_row(
+    app: &KitsmithApp,
+    ui: &mut egui::Ui,
+    id: u32,
+    restore_req: &mut Option<u32>,
+) -> Option<u32> {
+    let dragging = egui::DragAndDrop::has_payload_of_type::<ProjectDrag>(ui.ctx());
     let frame = egui::Frame::new()
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(8, 4));
-    let (_, payload) = ui.dnd_drop_zone::<ProjectDrag, ()>(frame, |ui| {
+    let (zone, payload) = ui.dnd_drop_zone::<ProjectDrag, ()>(frame, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.label(
@@ -348,13 +371,37 @@ fn empty_slot_row(ui: &mut egui::Ui, id: u32) -> Option<u32> {
                     .color(theme::TEXT_MUTED)
                     .monospace(),
             );
-            ui.label(
-                RichText::new("Empty")
-                    .color(theme::TEXT_MUTED)
-                    .size(theme::FONT_META),
-            );
+            // The drop target states the resulting action (PRD §35) — this
+            // drop used to mean Copy, so the verb must be visible here.
+            if dragging {
+                ui.label(
+                    RichText::new(format!("Move to slot {id:03}"))
+                        .color(theme::TEXT_PRIMARY)
+                        .size(theme::FONT_META),
+                );
+            } else {
+                ui.label(
+                    RichText::new("Empty")
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::FONT_META),
+                );
+            }
         });
     });
+    if app.manifest.get(&id).is_some_and(|b| b.raw) {
+        zone.response.context_menu(|ui| {
+            if ui
+                .add_enabled(
+                    !app.device_busy(),
+                    egui::Button::new("Restore from backup…"),
+                )
+                .clicked()
+            {
+                *restore_req = Some(id);
+                ui.close();
+            }
+        });
+    }
     payload.map(|drag| drag.src)
 }
 

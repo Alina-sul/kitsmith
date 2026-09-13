@@ -40,7 +40,7 @@ Status: ✅ built+hardware-verified · 🔶 built, needs hardware verification �
 | --- | --- | --- | --- |
 | List 128 project slots | FP 0x53 | ✅ | |
 | Download/backup project | FP 0x54–56 | ✅ | raw uncompressed layout parsed (kits, patterns, slot table) |
-| Upload/restore project | FP 0x57–59 | 🧭 | write side gated on WP0 write verification |
+| Upload/restore project | FP 0x57–59 | 🔶 | built: "Restore from backup" on empty slots (checksum-checked payload, empty-slot preflight, byte-compare verify); HW verify pending |
 | **Rename project** | FP | 🔶 | built in PR #8 (rename + verify); pending merge |
 | Copy project → slot | FP 0x5a–5c or down/up | 🔶 | copy_data built; pending HW verify |
 | Delete/clear project slot | FP 0x5c | 🔶 | built: mandatory pre-clear backup (abort if it fails), typed slot-number confirm, attestation checkbox; HW verify pending |

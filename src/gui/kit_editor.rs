@@ -355,7 +355,7 @@ pub fn save_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
             }
             ui.add_space(theme::GAP_S);
             ui.horizontal(|ui| {
-                let busy = app.execute.is_busy();
+                let busy = app.device_busy();
                 let disabled_hint = if connected.is_none() {
                     "Connect the Analog Rytm first"
                 } else if busy {
