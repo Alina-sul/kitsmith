@@ -1,6 +1,7 @@
-//! Sound Pool page (PRD §25, read-only): the 128 per-project Sound slots
-//! that pattern Sound Locks select from — dependencies invisible in the kit
-//! view. Writes arrive after verified write support.
+//! Sound Pool page (PRD §25): the 128 per-project Sound slots that pattern
+//! Sound Locks select from — dependencies invisible in the kit view.
+//! Read-only except renaming (right-click), which rides the verified
+//! object-write pipeline.
 
 use eframe::egui::{self, RichText, ScrollArea};
 
@@ -44,6 +45,7 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     }
     ui.add_space(theme::GAP_S);
 
+    let mut rename_req: Option<(u8, String)> = None;
     ScrollArea::vertical().show(ui, |ui| {
         for (index, sound) in model.pool_sounds.iter().enumerate() {
             let pool_index = index as u8;
@@ -63,7 +65,7 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                 });
                 continue;
             }
-            ui.horizontal(|ui| {
+            let row = ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("{:03}", index + 1))
                         .color(theme::TEXT_MUTED)
@@ -103,6 +105,24 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     );
                 }
             });
+            row.response
+                .interact(egui::Sense::click())
+                .context_menu(|ui| {
+                    if ui
+                        .button("Rename…")
+                        .on_hover_text(
+                            "Renames this pool Sound on the device — same verified \
+                             pipeline as kit renames.",
+                        )
+                        .clicked()
+                    {
+                        rename_req = Some((pool_index, sound.name.clone()));
+                        ui.close();
+                    }
+                });
         }
     });
+    if let Some((slot, _)) = rename_req {
+        crate::gui::kit_modals::open(app, crate::gui::app::KitRenameTarget::PoolSound(slot));
+    }
 }

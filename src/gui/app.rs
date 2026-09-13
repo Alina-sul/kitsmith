@@ -104,6 +104,7 @@ pub enum SaveOrigin {
 pub enum KitRenameTarget {
     Kit(usize),
     Sound { kit: usize, track: usize },
+    PoolSound(u8),
 }
 
 /// All per-frame-persistent UI state, separate from device/model state.
@@ -139,9 +140,11 @@ pub struct UiState {
     pub clear_confirm_draft: String,
     /// Restore-from-backup modal: the (empty) slot to re-upload into.
     pub restore_modal_slot: Option<u32>,
-    /// Quick-rename modal for a kit or a track Sound + the draft name.
+    /// Quick-rename modal for a kit, track Sound or pool Sound + the draft.
     pub kit_rename: Option<KitRenameTarget>,
     pub kit_rename_draft: String,
+    /// A launched pool-Sound rename awaiting its plan report: (slot, name).
+    pub pending_pool_rename: Option<(u8, String)>,
     /// Attestation checkbox shared by the slot-op modals ("the project in
     /// this slot is not currently loaded on the device") — the active slot
     /// is unreadable, so the user's word is the only possible guard.
@@ -865,6 +868,34 @@ impl eframe::App for KitsmithApp {
             self.log_activity(kind, title, Some(detail));
             if let Some(outcome) = drive_outcome {
                 self.toast(format!("{outcome} — verified"));
+            }
+            if let Some((slot, name)) = self.ui_state.pending_pool_rename.take() {
+                if report.succeeded() {
+                    // The read-back verified the name on the device; mirror it.
+                    if let Some(sound) = self
+                        .model
+                        .as_mut()
+                        .and_then(|m| m.pool_sounds.get_mut(usize::from(slot)))
+                    {
+                        sound.name = name.clone();
+                    }
+                    if let Some(model) = &self.model {
+                        if let Err(e) = cache::save(model) {
+                            self.toast(format!("cache write failed: {e}"));
+                        }
+                    }
+                    self.toast(format!(
+                        "Pool sound {:03} renamed to {name} — verified",
+                        slot + 1
+                    ));
+                } else {
+                    self.toast(format!(
+                        "Rename of pool sound {:03} failed — nothing was changed \
+                         locally. Re-sync the pool before retrying (see the \
+                         Stopped dialog for what the device reported).",
+                        slot + 1
+                    ));
+                }
             }
             if let Some((draft, origin)) = self.ui_state.kits.pending_save.take() {
                 if report.succeeded() {

@@ -12,6 +12,18 @@ use super::TRACK_COUNT;
 /// Longest kit/Sound name the device accepts (ASCII).
 pub const NAME_MAX_LEN: usize = 15;
 
+/// Validates a device object name (printable ASCII, ≤ 15 bytes) — the one
+/// rule shared by kit, track-Sound and pool-Sound renames.
+pub fn validate_name(name: &str) -> Result<(), String> {
+    if !name.is_ascii() || name.chars().any(|c| c.is_ascii_control()) {
+        return Err("name must be printable ASCII".into());
+    }
+    if name.len() > NAME_MAX_LEN {
+        return Err(format!("name is longer than {NAME_MAX_LEN} characters"));
+    }
+    Ok(())
+}
+
 /// Sample start/end travel as u16 (0..=30720) for an f32 range of 0.0..=120.0,
 /// so a read-back can differ from the written value by up to one wire step
 /// (120/30720 ≈ 0.0039). Values closer than this are the same position.
@@ -184,13 +196,10 @@ impl KitEdit {
             (FieldValue::Text(name), KitField::KitName | KitField::SoundName(_)) => {
                 // The GUI filters as the user types, but this gate is the one
                 // ops/ enforces — any future caller inherits it.
-                if !name.is_ascii() || name.chars().any(|c| c.is_ascii_control()) {
-                    return err("name must be printable ASCII");
+                match validate_name(name) {
+                    Ok(()) => Ok(()),
+                    Err(what) => err(&what),
                 }
-                if name.len() > NAME_MAX_LEN {
-                    return err("name is longer than 15 characters");
-                }
-                Ok(())
             }
             (FieldValue::Toggle(_), KitField::SampleLoop(_)) => Ok(()),
             (FieldValue::Float(v), field) => match field.float_range() {

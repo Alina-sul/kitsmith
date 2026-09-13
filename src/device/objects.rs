@@ -219,17 +219,52 @@ pub fn is_reply_to(reply: &[u8], query: &[u8]) -> bool {
     cmd.checked_sub(QUERY_CMD_BIAS) == Some(kind) && want_nr == got_nr
 }
 
-/// Waits for the reply to `query` and returns its raw bytes (`None` on
-/// timeout). Non-AR sysex is skipped; an AR object that is *not* the answer
-/// is still applied to the project (it is a late reply to an earlier query)
-/// but does not end the wait.
-pub fn accept_reply(link: &MidiLink, rytm: &mut RytmProject, query: &[u8]) -> Option<Vec<u8>> {
+/// Why [`try_accept_reply`] came back empty. The distinction matters when
+/// debugging on hardware: "the device answered but rytm-rs could not parse
+/// it" (likely firmware format drift) looks identical to silence otherwise —
+/// a confusion that has cost debugging time before (see the sysex-transport
+/// finding in docs/hardware-verification.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyFailure {
+    /// Nothing answering the query arrived in time.
+    Timeout,
+    /// The answer arrived but could not be parsed.
+    Unparseable,
+}
+
+/// Waits for the reply to `query` and returns its raw bytes. Non-AR sysex is
+/// skipped; an AR object that is *not* the answer is still applied to the
+/// project (it is a late reply to an earlier query) but does not end the
+/// wait. A matching reply that fails to parse is remembered — the wait
+/// continues (a clean retransmission may follow), but the failure is then
+/// reported as [`ReplyFailure::Unparseable`], not as silence.
+pub fn try_accept_reply(
+    link: &MidiLink,
+    rytm: &mut RytmProject,
+    query: &[u8],
+) -> Result<Vec<u8>, ReplyFailure> {
     let deadline = std::time::Instant::now() + OBJECT_REPLY_TIMEOUT;
-    loop {
-        let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
-        let msg = link.recv_timeout(remaining)?;
-        if feed_project(rytm, &msg) && is_reply_to(&msg, query) {
-            return Some(msg);
+    let mut saw_unparseable = false;
+    while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+        let Some(msg) = link.recv_timeout(remaining) else {
+            break;
+        };
+        let parsed = feed_project(rytm, &msg);
+        if is_reply_to(&msg, query) {
+            if parsed {
+                return Ok(msg);
+            }
+            saw_unparseable = true;
         }
     }
+    Err(if saw_unparseable {
+        ReplyFailure::Unparseable
+    } else {
+        ReplyFailure::Timeout
+    })
+}
+
+/// [`try_accept_reply`] without the failure detail.
+pub fn accept_reply(link: &MidiLink, rytm: &mut RytmProject, query: &[u8]) -> Option<Vec<u8>> {
+    try_accept_reply(link, rytm, query).ok()
 }
