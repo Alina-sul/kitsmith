@@ -55,7 +55,7 @@ Status: ✅ built+hardware-verified · 🔶 built, needs hardware verification �
 | Read kits of *backed-up* projects | RAW | ✅ | parsed from .arprj |
 | **Edit kit params** (levels, sounds, FX) | OS | 🔶 | kit editor v0 built (rename + track level + SMPL/AMP/FLTR via ops Plan, read-back-verified); FX pages + machine params next; HW write pending |
 | **Create kit from scratch → save to slot** | OS | 🧭 | the headline write; machine-per-track validity per `ar-sound-machines` skill |
-| **Rename kit / Sound** | OS | 🔶 | built into kit editor v0 (ASCII ≤15, validated + read-back-verified); HW write pending |
+| **Rename kit / Sound** | OS | 🔶 | built into kit editor v0 (ASCII ≤15, validated + read-back-verified) + quick-rename from the kit list / pad context menus (same Plan pipeline, no edit mode needed); HW write pending |
 | Copy kit across projects | RAW→OS | 🔶 | built in PR #8 (capture→switch→paste); slot remap in plan |
 | **Reorder kits** (slot moves) | OS | 🔬 | patterns reference kits by slot — reorder must rewrite pattern links |
 | Sound pool management (load/unload/rename) | OS | 🧭 | pool = 128 slots; sound locks reference pool indices |
@@ -78,7 +78,7 @@ Status: ✅ built+hardware-verified · 🔶 built, needs hardware verification �
 | --- | --- | --- | --- |
 | Read patterns (trigs, locks, kit link) | OS/RAW | ✅ | |
 | Copy pattern across projects | OS | 🔶 | built in PR #8; pending HW verify |
-| Rename pattern | OS | 🧭 | |
+| Rename pattern | — | 🚫 | no name field in the pattern object (`ar_pattern_t` is fully offset-mapped with none; rytm-rs exposes none) — the device identifies patterns as bank+number (A01–H16) only. Earlier 🧭 was wrong |
 | Reorder patterns | OS | 🔬 | chains/songs reference pattern slots |
 | Songs | — | 🔬 | rytm-rs has no song support; libanalogrytm has the type — research |
 

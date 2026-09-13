@@ -85,9 +85,25 @@ pub struct KitsState {
     /// The confirm dialog for discarding a non-empty draft.
     pub discard_confirm_open: bool,
     /// A draft whose save plan is executing; applied to the local model when
-    /// the plan's read-back verification succeeds, restored to the editor
-    /// when it fails.
-    pub pending_save: Option<crate::model::edit::KitEditDraft>,
+    /// the plan's read-back verification succeeds. The origin decides the
+    /// failure handling: editor saves are restored to the editor, quick
+    /// renames just report (the user never opened the editor).
+    pub pending_save: Option<(crate::model::edit::KitEditDraft, SaveOrigin)>,
+}
+
+/// Where a pending kit save came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOrigin {
+    Editor,
+    QuickRename,
+}
+
+/// What the quick-rename modal is renaming (pure UI intent, active project
+/// only — snapshots are read-only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KitRenameTarget {
+    Kit(usize),
+    Sound { kit: usize, track: usize },
 }
 
 /// All per-frame-persistent UI state, separate from device/model state.
@@ -123,6 +139,9 @@ pub struct UiState {
     pub clear_confirm_draft: String,
     /// Restore-from-backup modal: the (empty) slot to re-upload into.
     pub restore_modal_slot: Option<u32>,
+    /// Quick-rename modal for a kit or a track Sound + the draft name.
+    pub kit_rename: Option<KitRenameTarget>,
+    pub kit_rename_draft: String,
     /// Attestation checkbox shared by the slot-op modals ("the project in
     /// this slot is not currently loaded on the device") — the active slot
     /// is unreadable, so the user's word is the only possible guard.
@@ -717,6 +736,21 @@ impl KitsmithApp {
         }
     }
 
+    /// The kit's current display name (post-model-update where applicable).
+    pub(crate) fn kit_label(&self, kit_index: usize) -> String {
+        self.model
+            .as_ref()
+            .and_then(|m| m.kits.get(kit_index))
+            .map_or_else(
+                || format!("Kit {:02}", kit_index + 1),
+                |k| {
+                    crate::model::names::kit_display_name(&k.name, k.index)
+                        .text()
+                        .to_owned()
+                },
+            )
+    }
+
     /// True while ANY controller is talking to the device — file ops, an
     /// ops plan, the backup indexer, or a sync. The port carries one serial
     /// conversation; nothing may start while another is running.
@@ -779,6 +813,7 @@ impl eframe::App for KitsmithApp {
 
         project_modals::show(self, &ctx);
         crate::gui::drive_modals::show(self, &ctx);
+        crate::gui::kit_modals::show(self, &ctx);
 
         // Plan preview / execution modal, if a drag landed.
         let in_port = self.connected_in_port();
@@ -831,19 +866,7 @@ impl eframe::App for KitsmithApp {
             if let Some(outcome) = drive_outcome {
                 self.toast(format!("{outcome} — verified"));
             }
-            if let Some(draft) = self.ui_state.kits.pending_save.take() {
-                let kit_label = self
-                    .model
-                    .as_ref()
-                    .and_then(|m| m.kits.get(draft.kit_index))
-                    .map_or_else(
-                        || format!("Kit {:02}", draft.kit_index + 1),
-                        |k| {
-                            crate::model::names::kit_display_name(&k.name, k.index)
-                                .text()
-                                .to_owned()
-                        },
-                    );
+            if let Some((draft, origin)) = self.ui_state.kits.pending_save.take() {
                 if report.succeeded() {
                     // The read-back verified these values on the device;
                     // mirror them locally instead of forcing a re-sync.
@@ -853,24 +876,52 @@ impl eframe::App for KitsmithApp {
                             self.toast(format!("cache write failed: {e}"));
                         }
                     }
-                    self.toast(format!("{kit_label} saved and verified"));
-                } else if self.ui_state.kits.edit_draft.is_none() {
-                    // The write did not complete — hand the edits back to
-                    // the editor so nothing the user typed is lost. (The
-                    // write may still have landed before verification
-                    // failed, so the dashboard can trail the device.)
-                    self.ui_state.kits.edit_draft = Some(draft);
-                    self.toast(format!(
-                        "Save failed — your edits are back in the kit editor. \
-                         Re-sync to see {kit_label}'s actual device state."
-                    ));
+                    // Label AFTER applying: a rename's toast must show the
+                    // name the operation just wrote, not the old one.
+                    let kit_label = self.kit_label(draft.kit_index);
+                    match origin {
+                        SaveOrigin::Editor => {
+                            self.toast(format!("{kit_label} saved and verified"));
+                        }
+                        SaveOrigin::QuickRename => {
+                            let renamed = draft
+                                .edits
+                                .first()
+                                .map(|e| e.value.to_string())
+                                .unwrap_or_default();
+                            self.toast(format!("Renamed to {renamed} — verified"));
+                        }
+                    }
                 } else {
-                    // A newer draft exists; never silently overwrite it.
-                    self.toast(format!(
-                        "Save of {kit_label} failed; its edits were dropped in \
-                         favor of the draft you started since. Re-sync to see \
-                         the device's actual state."
-                    ));
+                    let kit_label = self.kit_label(draft.kit_index);
+                    match origin {
+                        // A failed quick-rename never opens the editor the
+                        // user didn't ask for — nothing changed locally.
+                        SaveOrigin::QuickRename => self.toast(format!(
+                            "Rename of {kit_label} failed — nothing was changed \
+                             locally. Re-sync to see the device's actual state."
+                        )),
+                        SaveOrigin::Editor if self.ui_state.kits.edit_draft.is_none() => {
+                            // The write did not complete — hand the edits back
+                            // to the editor so nothing the user typed is lost.
+                            // (The write may still have landed before
+                            // verification failed, so the dashboard can trail
+                            // the device.)
+                            self.ui_state.kits.edit_draft = Some(draft);
+                            self.toast(format!(
+                                "Save failed — your edits are back in the kit editor. \
+                                 Re-sync to see {kit_label}'s actual device state."
+                            ));
+                        }
+                        SaveOrigin::Editor => {
+                            // A newer draft exists; never silently overwrite it.
+                            self.toast(format!(
+                                "Save of {kit_label} failed; its edits were dropped in \
+                                 favor of the draft you started since. Re-sync to see \
+                                 the device's actual state."
+                            ));
+                        }
+                    }
                 }
             }
         }

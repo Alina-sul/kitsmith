@@ -7,7 +7,7 @@ use eframe::egui::{
     self, CornerRadius, Frame, Id, Margin, RichText, ScrollArea, Sense, Stroke, Vec2,
 };
 
-use crate::gui::app::{KitFilter, KitsmithApp};
+use crate::gui::app::{KitFilter, KitRenameTarget, KitsmithApp};
 use crate::gui::execute::PendingAssign;
 use crate::gui::{theme, widgets};
 use crate::model::names::{self, ResolvedName};
@@ -23,6 +23,7 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     let can_capture = connected.is_some() && !app.capture.is_running();
     let mut request_capture_kit: Option<usize> = None;
     let mut request_pad_assign: Option<(usize, usize)> = None;
+    let mut request_rename: Option<KitRenameTarget> = None;
     let mut open_kit_paste = false;
     let mut clear_kit_clipboard = false;
     let mut pending = None;
@@ -63,7 +64,9 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     &linked,
                     state,
                     can_copy_kit,
+                    browsing,
                     &mut request_capture_kit,
+                    &mut request_rename,
                 );
             });
 
@@ -112,9 +115,15 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
                     egui::ScrollArea::both()
                         .id_salt("pad-grid-scroll")
                         .show(ui, |ui| {
-                            if let Some(assign) =
-                                pad_grid(ui, model, kit, state, browsing, &mut request_pad_assign)
-                            {
+                            if let Some(assign) = pad_grid(
+                                ui,
+                                model,
+                                kit,
+                                state,
+                                browsing,
+                                &mut request_pad_assign,
+                                &mut request_rename,
+                            ) {
                                 pending = Some(assign);
                             }
                         });
@@ -129,6 +138,9 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
     if let Some((kit_index, track)) = request_pad_assign {
         app.ui_state.pending_pad_assign = Some((kit_index, track));
         app.ui_state.nav = crate::gui::app::Nav::Drive;
+    }
+    if let Some(target) = request_rename {
+        crate::gui::kit_modals::open(app, target);
     }
     if let Some(index) = request_capture_kit {
         if let crate::gui::app::ProjectSelection::Slot(id) = project_sel {
@@ -331,13 +343,16 @@ fn kit_paste_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
 
 /// Kit list pane with In use / All / Unused filters and search (PRD §11).
 /// Right-click a kit for transfer actions (PRD §36).
+#[allow(clippy::too_many_arguments)]
 fn kit_list(
     ui: &mut egui::Ui,
     model: &ProjectModel,
     linked: &[usize],
     state: &mut crate::gui::app::KitsState,
     can_capture: bool,
+    browsing: bool,
     request_capture: &mut Option<usize>,
+    request_rename: &mut Option<KitRenameTarget>,
 ) {
     widgets::section_label(ui, "KITS");
     ui.add_space(4.0);
@@ -428,6 +443,21 @@ fn kit_list(
                         .clicked()
                     {
                         *request_capture = Some(kit.index);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(!browsing, egui::Button::new("Rename kit…"))
+                        .on_hover_text(
+                            "Renames the kit on the device — same verified pipeline \
+                             as the kit editor, without entering edit mode.",
+                        )
+                        .on_disabled_hover_text(
+                            "Snapshots are read-only — load this project on the device \
+                             to rename its kits",
+                        )
+                        .clicked()
+                    {
+                        *request_rename = Some(KitRenameTarget::Kit(kit.index));
                         ui.close();
                     }
                 });
@@ -586,6 +616,7 @@ fn pad_grid(
     state: &mut crate::gui::app::KitsState,
     browsing: bool,
     request_pad_assign: &mut Option<(usize, usize)>,
+    request_rename: &mut Option<KitRenameTarget>,
 ) -> Option<PendingAssign> {
     let mut dropped = None;
     let card_width = ((ui.available_width() - 3.0 * theme::PAD_GAP) / 4.0)
@@ -604,6 +635,7 @@ fn pad_grid(
                     state,
                     browsing,
                     request_pad_assign,
+                    request_rename,
                 ) {
                     dropped = Some(assign);
                 }
@@ -634,6 +666,7 @@ fn pad_card(
     state: &mut crate::gui::app::KitsState,
     browsing: bool,
     request_pad_assign: &mut Option<(usize, usize)>,
+    request_rename: &mut Option<KitRenameTarget>,
 ) -> Option<PendingAssign> {
     let sound = kit.sounds.get(track)?;
     let color = theme::TRACK_COLORS[track];
@@ -732,6 +765,23 @@ fn pad_card(
             .clicked()
         {
             *request_pad_assign = Some((kit.index, track));
+            ui.close();
+        }
+        if ui
+            .add_enabled(!browsing, egui::Button::new("Rename Sound…"))
+            .on_hover_text(
+                "Renames this track's Sound on the device — same verified pipeline \
+                 as the kit editor, without entering edit mode.",
+            )
+            .on_disabled_hover_text(
+                "Snapshots are read-only — load this project on the device to edit it",
+            )
+            .clicked()
+        {
+            *request_rename = Some(KitRenameTarget::Sound {
+                kit: kit.index,
+                track,
+            });
             ui.close();
         }
     });

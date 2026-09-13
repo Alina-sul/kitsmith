@@ -393,6 +393,28 @@ fn edit_kit_verification_mismatch_fails_with_field_name() {
 }
 
 #[test]
+fn quick_rename_drafts_compile_and_verify_like_any_edit() {
+    // The quick-rename modal builds one-edit drafts; they must ride the
+    // exact pipeline the kit editor uses — edit then field verify.
+    for field in [KitField::KitName, KitField::SoundName(7)] {
+        let mut draft = KitEditDraft::new(9);
+        draft.push(field, FieldValue::Text("NEW NAME".into()));
+        let plan = Plan::edit_kit(&draft, true).expect("plan");
+        assert!(matches!(
+            plan.steps[0],
+            OpStep::EditKit { kit_index: 9, .. }
+        ));
+        assert!(matches!(
+            plan.steps[1],
+            OpStep::VerifyKitFields { kit_index: 9, .. }
+        ));
+        let mut backend = MockBackend::default();
+        let report = execute(&plan, &mut backend, |_, _| {});
+        assert!(report.succeeded(), "failed: {:?}", report.failed);
+    }
+}
+
+#[test]
 fn draft_dedupes_by_field_and_clears() {
     let mut draft = KitEditDraft::new(0);
     draft.push(KitField::AmpDecay(2), FieldValue::Int(10));
