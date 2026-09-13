@@ -58,7 +58,7 @@ Status: ✅ built+hardware-verified · 🔶 built, needs hardware verification �
 | **Rename kit / Sound** | OS | 🔶 | built into kit editor v0 (ASCII ≤15, validated + read-back-verified) + quick-rename from the kit list / pad context menus (same Plan pipeline, no edit mode needed); HW write pending |
 | Copy kit across projects | RAW→OS | 🔶 | built in PR #8 (capture→switch→paste); slot remap in plan |
 | **Reorder kits** (slot moves) | OS | 🔬 | patterns reference kits by slot — reorder must rewrite pattern links |
-| Sound pool management (load/unload/rename) | OS | 🧭 | pool = 128 slots; sound locks reference pool indices |
+| Sound pool management (load/unload/rename) | OS | 🔶/🧭 | rename built (drift-guarded sound-object write + read-back verify, pool view context menu; HW verify pending incl. the obj_nr→pool-slot routing probe); load/unload still 🧭 |
 | +Drive Sound library (4096) | FP `.arsnd` / OS | 🔬 | which protocol wins for bulk library ops — research |
 | **Play a pad / audition a kit** | MIDI | 🧭 | notes 0–11 ch 1–12; audition sequence respects voice-pair chokes |
 | Live param control (mixer, tweaks) | MIDI CC/NRPN | 🧭 | working-state only; never presented as saved |

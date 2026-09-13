@@ -869,6 +869,33 @@ impl eframe::App for KitsmithApp {
             if let Some(outcome) = drive_outcome {
                 self.toast(format!("{outcome} — verified"));
             }
+            if let Some((slot, name)) = self.ui_state.pending_pool_rename.take() {
+                if report.succeeded() {
+                    // The read-back verified the name on the device; mirror it.
+                    if let Some(sound) = self
+                        .model
+                        .as_mut()
+                        .and_then(|m| m.pool_sounds.get_mut(usize::from(slot)))
+                    {
+                        sound.name = name.clone();
+                    }
+                    if let Some(model) = &self.model {
+                        if let Err(e) = cache::save(model) {
+                            self.toast(format!("cache write failed: {e}"));
+                        }
+                    }
+                    self.toast(format!(
+                        "Pool sound {:03} renamed to {name} — verified",
+                        slot + 1
+                    ));
+                } else {
+                    self.toast(format!(
+                        "Rename of pool sound {:03} failed — nothing was changed \
+                         locally. Re-sync to see the device's actual state.",
+                        slot + 1
+                    ));
+                }
+            }
             if let Some((draft, origin)) = self.ui_state.kits.pending_save.take() {
                 if report.succeeded() {
                     // The read-back verified these values on the device;

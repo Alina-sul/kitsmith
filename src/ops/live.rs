@@ -52,9 +52,8 @@ impl LiveBackend {
         let query = SoundQuery::new(usize::from(pool_index))
             .and_then(|q| q.as_sysex())
             .map_err(|e| OpError::Device(e.to_string()))?;
-        self.exchange(&query).ok_or_else(|| {
-            OpError::Device(format!("pool sound {pool_index} query got no reply"))
-        })
+        self.exchange(&query)
+            .ok_or_else(|| OpError::Device(format!("pool sound {pool_index} query got no reply")))
     }
 }
 

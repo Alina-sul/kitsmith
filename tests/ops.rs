@@ -31,6 +31,10 @@ struct MockBackend {
     /// When true, +Drive writes are acknowledged but not applied — the
     /// verify listing then disagrees.
     ignore_drive_writes: bool,
+    /// Pool Sound names, index = pool slot.
+    pool_names: HashMap<u8, String>,
+    /// When set, pool-name reads report this instead of what was written.
+    lie_on_pool_read: Option<String>,
 }
 
 impl MockBackend {
@@ -219,6 +223,24 @@ impl DeviceBackend for MockBackend {
     fn ram_sample_slots(&mut self) -> Result<Vec<RamSlot>, OpError> {
         self.calls.push("ram-slots".into());
         Ok(self.ram.clone())
+    }
+
+    fn rename_pool_sound(&mut self, pool_index: u8, name: &str) -> Result<(), OpError> {
+        self.calls.push(format!("rename-pool {pool_index}"));
+        self.pool_names.insert(pool_index, name.to_owned());
+        Ok(())
+    }
+
+    fn read_pool_sound_name(&mut self, pool_index: u8) -> Result<String, OpError> {
+        self.calls.push(format!("read-pool {pool_index}"));
+        if let Some(lie) = &self.lie_on_pool_read {
+            return Ok(lie.clone());
+        }
+        Ok(self
+            .pool_names
+            .get(&pool_index)
+            .cloned()
+            .unwrap_or_default())
     }
 
     fn download_sample_to(
@@ -412,6 +434,49 @@ fn quick_rename_drafts_compile_and_verify_like_any_edit() {
         let report = execute(&plan, &mut backend, |_, _| {});
         assert!(report.succeeded(), "failed: {:?}", report.failed);
     }
+}
+
+#[test]
+fn pool_rename_plan_backs_up_writes_and_verifies() {
+    let plan = Plan::rename_pool_sound(7, "SUB BASS", false).expect("plan");
+    assert_eq!(plan.steps.len(), 3);
+    assert_eq!(plan.steps[0], OpStep::BackupProject);
+    let mut backend = MockBackend::default();
+    let report = execute(&plan, &mut backend, |_, _| {});
+    assert!(report.succeeded(), "failed: {:?}", report.failed);
+    assert_eq!(
+        backend.calls,
+        vec!["backup", "rename-pool 7", "read-pool 7"]
+    );
+    assert_eq!(backend.pool_names[&7], "SUB BASS");
+    // NUL padding on read-back must not fail verification.
+    let mut padded = MockBackend {
+        lie_on_pool_read: Some("SUB BASS\0\0\0\0\0\0\0".into()),
+        ..MockBackend::default()
+    };
+    let plan = Plan::rename_pool_sound(7, "SUB BASS", true).expect("plan");
+    assert!(execute(&plan, &mut padded, |_, _| {}).succeeded());
+}
+
+#[test]
+fn pool_rename_verification_mismatch_fails() {
+    let plan = Plan::rename_pool_sound(3, "CLAP", true).expect("plan");
+    let mut backend = MockBackend {
+        lie_on_pool_read: Some("OTHER".into()),
+        ..MockBackend::default()
+    };
+    let report = execute(&plan, &mut backend, |_, _| {});
+    assert!(!report.succeeded());
+    let (_, err) = report.failed.unwrap();
+    assert!(err.contains("verification failed"), "got: {err}");
+}
+
+#[test]
+fn pool_rename_plan_rejects_bad_input() {
+    assert!(Plan::rename_pool_sound(128, "X", true).is_err());
+    assert!(Plan::rename_pool_sound(0, "0123456789ABCDEF", true).is_err());
+    assert!(Plan::rename_pool_sound(0, "ümlaut", true).is_err());
+    assert!(Plan::rename_pool_sound(127, "OK NAME", true).is_ok());
 }
 
 #[test]
