@@ -11,6 +11,12 @@ use crate::gui::{theme, widgets};
 use crate::model::edit::{FieldValue, KitEditDraft, KitField, NAME_MAX_LEN};
 use crate::model::{names, KitModel, ProjectModel, TrackParams};
 
+/// Post-plan guidance for every kit-object write (the device holds kit
+/// changes in working RAM): shared by the editor save and quick-rename.
+pub(crate) const KIT_WRITE_POST_NOTE: &str =
+    "If this kit is loaded on the device, reload it there to hear the changes. \
+     Save the project on the device (PROJECT → SAVE) to persist them.";
+
 /// Whether the draft (if any) targets this kit.
 pub fn is_editing(state: &KitsState, kit_index: usize) -> bool {
     state
@@ -385,17 +391,13 @@ pub fn save_modal(app: &mut KitsmithApp, ctx: &egui::Context) {
                 plan,
                 port,
                 ctx.clone(),
-                Some(
-                    "If this kit is loaded on the device, reload it there to hear the \
-                     changes. Save the project on the device (PROJECT → SAVE) to persist them."
-                        .to_owned(),
-                ),
+                Some(KIT_WRITE_POST_NOTE.to_owned()),
             );
             if launched {
                 app.ui_state.kits.save_modal_open = false;
                 // The draft rides along so a verified save can update the
                 // local model (and a failed one restores the editor).
-                app.ui_state.kits.pending_save = Some(draft);
+                app.ui_state.kits.pending_save = Some((draft, crate::gui::app::SaveOrigin::Editor));
                 app.ui_state.kits.edit_draft = None;
             } else {
                 app.toast(

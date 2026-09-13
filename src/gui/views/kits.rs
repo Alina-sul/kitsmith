@@ -140,24 +140,7 @@ pub fn show(app: &mut KitsmithApp, ui: &mut egui::Ui) {
         app.ui_state.nav = crate::gui::app::Nav::Drive;
     }
     if let Some(target) = request_rename {
-        // Prefill with the current name so an untouched draft reads as
-        // "unchanged", not as an empty error.
-        app.ui_state.kit_rename_draft = match target {
-            KitRenameTarget::Kit(kit) => app
-                .model
-                .as_ref()
-                .and_then(|m| m.kits.get(kit))
-                .map(|k| names::clean(&k.name).to_owned())
-                .unwrap_or_default(),
-            KitRenameTarget::Sound { kit, track } => app
-                .model
-                .as_ref()
-                .and_then(|m| m.kits.get(kit))
-                .and_then(|k| k.sounds.get(track))
-                .map(|s| names::clean(&s.name).to_owned())
-                .unwrap_or_default(),
-        };
-        app.ui_state.kit_rename = Some(target);
+        crate::gui::kit_modals::open(app, target);
     }
     if let Some(index) = request_capture_kit {
         if let crate::gui::app::ProjectSelection::Slot(id) = project_sel {
@@ -786,7 +769,10 @@ fn pad_card(
         }
         if ui
             .add_enabled(!browsing, egui::Button::new("Rename Sound…"))
-            .on_hover_text("Renames this track's Sound on the device (verified).")
+            .on_hover_text(
+                "Renames this track's Sound on the device — same verified pipeline \
+                 as the kit editor, without entering edit mode.",
+            )
             .on_disabled_hover_text(
                 "Snapshots are read-only — load this project on the device to edit it",
             )
